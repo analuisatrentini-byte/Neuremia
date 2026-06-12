@@ -31,61 +31,63 @@ enum KeychainStore {
         case apnsDeviceToken = "neuroflow.apnsDeviceToken"
         case draftEncryptionKey = "neuroflow.draftEncryptionKey"
         case userRole = "neuroflow.userRole"
+        // N-I4: email and name are PII — keep in Keychain, not UserDefaults
+        case userEmail = "neuroflow.userEmail"
+        case userName = "neuroflow.userName"
     }
 
     private static let service = "io.neuroflow.app.secure"
     static let notificationKeyName = "neuroflow.keychain.key"
+    // N-C2: Serialize all Keychain reads/writes through a single unfair lock so
+    // that concurrent JWT refresh and background sync tasks never race on
+    // SecItemCopyMatching / SecItemUpdate pairs.
+    private static var lock = OSAllocatedUnfairLock()
 
     static func string(for key: Key) -> String? {
-        var query = baseQuery(for: key)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            return nil
+        lock.withLock {
+            var query = baseQuery(for: key)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            guard status == errSecSuccess,
+                  let data = result as? Data,
+                  let value = String(data: data, encoding: .utf8) else { return nil }
+            return value
         }
-        return value
     }
 
     @discardableResult
     static func set(_ value: String, for key: Key) -> Bool {
-        let data = Data(value.utf8)
-        let query = baseQuery(for: key)
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        let success: Bool
-        if updateStatus == errSecSuccess {
-            success = true
-        } else if updateStatus == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = data
-            insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            success = SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
-        } else {
-            success = false
+        let success: Bool = lock.withLock {
+            let data = Data(value.utf8)
+            let query = baseQuery(for: key)
+            let attributes: [String: Any] = [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            ]
+            let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            if updateStatus == errSecSuccess {
+                return true
+            } else if updateStatus == errSecItemNotFound {
+                var insert = query
+                insert[kSecValueData as String] = data
+                insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+            }
+            return false
         }
-
-        if success {
-            postChange(for: key)
-        }
+        if success { postChange(for: key) }
         return success
     }
 
     @discardableResult
     static func delete(_ key: Key) -> Bool {
-        let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
-        let success = status == errSecSuccess || status == errSecItemNotFound
-        if success {
-            postChange(for: key)
+        let success: Bool = lock.withLock {
+            let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         }
+        if success { postChange(for: key) }
         return success
     }
 
@@ -113,7 +115,9 @@ enum KeychainStore {
     private static let legacyMigrations: [(String, Key)] = [
         ("neuroflowAuthToken", .authToken),
         ("neuroflowAPNsDeviceToken", .apnsDeviceToken),
-        ("neuroflowUserRole", .userRole)
+        ("neuroflowUserRole", .userRole),
+        ("neuroflowUserEmail", .userEmail),   // N-I4
+        ("neuroflowUserName", .userName)       // N-I4
     ]
 
     private static func baseQuery(for key: Key) -> [String: Any] {
@@ -246,6 +250,28 @@ enum DraftStore {
 
     static func remove(forKey key: String) {
         UserDefaults.standard.removeObject(forKey: storagePrefix + key)
+    }
+
+    // MARK: - Backup envelope helpers
+
+    /// Encrypt a plain string to AES-GCM base-64 for inclusion in the
+    /// backup JSON. The same device key is used so the file is useless
+    /// without the Keychain — even if the JSON is extracted from the device.
+    static func encryptString(_ value: String) -> String? {
+        guard let plaintext = value.data(using: .utf8) else { return nil }
+        guard let sealed = try? AES.GCM.seal(plaintext, using: symmetricKey),
+              let combined = sealed.combined else { return nil }
+        return combined.base64EncodedString()
+    }
+
+    /// Inverse of `encryptString(_:)`. Returns `nil` if the ciphertext is
+    /// malformed or was encrypted with a different key (e.g. restored from
+    /// a different device without key migration).
+    static func decryptString(_ base64: String) -> String? {
+        guard let ciphertext = Data(base64Encoded: base64),
+              let sealed = try? AES.GCM.SealedBox(combined: ciphertext),
+              let plaintext = try? AES.GCM.open(sealed, using: symmetricKey) else { return nil }
+        return String(data: plaintext, encoding: .utf8)
     }
 
     /// One-shot migration: if the legacy plaintext `@AppStorage` value still
@@ -384,6 +410,17 @@ final class CertificatePinningDelegate: NSObject, URLSessionDelegate {
             #else
             completionHandler(.cancelAuthenticationChallenge, nil)
             #endif
+            return
+        }
+
+        // Sprint B: avaliar a cadeia ANTES de comparar pins. Sem isso, um cert
+        // pinado mas expirado/revogado seria aceito (CN bate por hash mesmo
+        // após validade vencer). SecTrustEvaluateWithError aplica as policies
+        // padrão (validity, hostname, basic constraints) e retorna false em
+        // qualquer falha.
+        var evaluationError: CFError?
+        guard SecTrustEvaluateWithError(trust, &evaluationError) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 

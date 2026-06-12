@@ -12,6 +12,7 @@ import UserNotifications
 import UniformTypeIdentifiers
 import AVFoundation
 import Combine
+import Network
 #if canImport(HealthKit)
 import HealthKit
 #endif
@@ -240,7 +241,14 @@ private final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideo
             return
         }
         let cleanAverageInterval = cleanIntervals.reduce(0, +) / Double(cleanIntervals.count)
-        let bpm = min(max(60 / cleanAverageInterval, 40), 160)
+        // N-I3: store the raw physiological value — do NOT clamp to 40-160.
+        // Clamping would mask bradycardia (<40 BPM, e.g. lithium side-effect)
+        // and tachycardia (>160 BPM, e.g. manic episode) from the clinician.
+        // Signal quality is halved when the value is outside the plausible
+        // resting range so the UI can display a low-confidence indicator.
+        let bpm = 60 / cleanAverageInterval
+        let bpmIsPlausible = bpm >= 40 && bpm <= 200
+        let adjustedQuality = bpmIsPlausible ? quality : quality * 0.5
         let hrvMs = cleanIntervals.count >= 20 && quality >= 0.65
             ? min(max(rmssd(cleanIntervals) * 1000, 5), 180)
             : 0
@@ -253,7 +261,7 @@ private final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideo
         let stressIndex = min(max((bpm - 55) * 0.8 + (70 - hrvForStress) * 0.7 + (1 - quality) * 25, 0), 100)
 
         DispatchQueue.main.async {
-            self.signalQuality = quality
+            self.signalQuality = adjustedQuality
             self.heartRate = bpm
             self.hrv = hrvMs
             self.perfusion = perfusionIndex
@@ -610,6 +618,12 @@ struct ContentView: View {
     @State private var scaleStatusMessage = ""
     @State private var reportStatusMessage = ""
     @State private var selectedPatientPage = PatientPage.diary
+    // Sprint A: confirmação antes de aplicar troca de perfil de acesso.
+    // Toque acidental no Picker antes mudava a TabView raiz sem aviso.
+    @State private var roleChangePending: AccessRole?
+    // Sprint A: debounce do botão Save. O dayKey @Attribute(.unique) do
+    // commit M5 não tolera duas execuções concorrentes do mesmo dia.
+    @State private var isSavingCheckIn = false
     @State private var loginEmail = ""
     @State private var loginPassword = ""
     @State private var fullName = ""
@@ -642,6 +656,10 @@ struct ContentView: View {
     @State private var medicationPlans: [MedicationPlanEntry] = []
     @State private var customSymptoms: [CustomSymptomEntry] = []
     @State private var offlineSyncQueue: [OfflineSyncItem] = []
+    // N-I2: watch network path changes and automatically flush the offline
+    // queue when connectivity is restored without requiring user interaction.
+    @State private var networkMonitor = NWPathMonitor()
+    @State private var networkMonitorQueue = DispatchQueue(label: "io.neuroflow.networkMonitor", qos: .background)
     @State private var typingStartedAt: Date?
     @State private var bodySignalTypingLatency = 0.0
     @State private var bodySignalTypingSpeed = 0.0
@@ -649,8 +667,11 @@ struct ContentView: View {
     @State private var appSessionStartedAt = Date()
     @KeychainStored(.authToken) private var authToken
     @KeychainStored(.refreshToken) private var refreshToken
-    @AppStorage("neuroflowUserEmail") private var authenticatedEmail = ""
-    @AppStorage("neuroflowUserName") private var authenticatedName = ""
+    // N-I4: email and name are PII — Keychain instead of UserDefaults plaintext.
+    // Legacy @AppStorage values are auto-migrated on first launch by
+    // KeychainStore.migrateLegacyTokenIfNeeded() (called in AppDelegate).
+    @KeychainStored(.userEmail) private var authenticatedEmail
+    @KeychainStored(.userName) private var authenticatedName
     @KeychainStored(.userRole) private var authenticatedRole
     @AppStorage("neuroflowUserId") private var authenticatedUserId = 0
     @AppStorage("neuroflowMedicationReminderEnabled") private var medicationReminderEnabled = false
@@ -796,14 +817,36 @@ struct ContentView: View {
     /// score invalidate the PatientStore cache and trigger a recompute.
     /// Free-text fields (journal, side-effects) are excluded because they
     /// don't affect the computed summary and omitting them keeps this cheap.
-    private var storeFingerprint: String {
+    // Sprint A (REG-3): cheap key — apenas contagens dos 4 arrays. O fingerprint
+    // pesado (que itera mood/anxiety/sleep/...) só roda dentro de
+    // `recomputeStoreFingerprintIfNeeded()` quando count muda. Antes do fix,
+    // o `.task(id: storeFingerprint)` chamava o getter em cada body re-eval,
+    // disparando um loop O(n) sobre todos os check-ins por render.
+    private var storeFingerprintCheap: String {
+        // N-C3: include the number of acknowledged alerts so that ack-ing an
+        // alert fires .task(id:) and patientStore.recompute() removes it from
+        // activeAlerts. Without this, acknowledged alerts stay visible until
+        // another count-changing event happens.
+        let ackedCount = alerts.filter(\.acknowledged).count
+        return "\(checkIns.count)-\(assessments.count)-\(alerts.count)-\(ackedCount)-\(reports.count)"
+    }
+
+    private func computeFullStoreFingerprint() -> String {
+        // Sub-expressões nomeadas: a versão original (commit 413f734) juntava
+        // tudo em uma única expressão e o type-checker do Swift estourava o
+        // limite ("unable to type-check in reasonable time").
         let checkInSignal = checkIns.reduce(into: 0) { acc, c in
-            acc += Int(c.mood * 10) + Int(c.anxiety * 10)
-                + Int(c.sleepHours * 10) + (c.medicationTaken ? 1 : 0)
-                + (c.suicidalIdeation ? 100 : 0)
+            let mood = Int(c.mood * 10)
+            let anxiety = Int(c.anxiety * 10)
+            let sleep = Int(c.sleepHours * 10)
+            let med: Int = c.medicationTaken ? 1 : 0
+            let suicidal: Int = c.suicidalIdeation ? 100 : 0
+            acc += mood + anxiety + sleep + med + suicidal
         }
         let assessmentSignal = assessments.reduce(0) { $0 + $1.score }
-        let alertSignal = alerts.reduce(into: 0) { acc, a in acc += a.acknowledged ? 1 : 0 }
+        let alertSignal = alerts.reduce(into: 0) { acc, a in
+            acc += a.acknowledged ? 1 : 0
+        }
         let reportSignal = reports.count
         return "\(checkIns.count)-\(assessments.count)-\(checkInSignal)-\(assessmentSignal)-\(alerts.count)-\(alertSignal)-\(reportSignal)"
     }
@@ -1114,11 +1157,13 @@ struct ContentView: View {
 
     private var rootWithLifecycle: some View {
         rootWithSheets
-            // Sprint E #4: alimenta o `patientStore` (sortedCheckIns/Assessments
-            // + summary) sempre que as contagens mudam. Tira o sort+summary do
-            // hot path do body — antes da auditoria as computeds rodavam ~30x
-            // por render.
-            .task(id: storeFingerprint) {
+            // Sprint E #4 + Sprint A (REG-3): id é cheap key (4 contagens). O
+            // recompute interno re-compara contra o fingerprint full antes de
+            // re-sortar/re-summary. Trade-off: edit de check-in passado sem
+            // mudar contagem (raro com SwiftData @Model que normalmente recria
+            // arrays) tem latência de uma render até o próximo `count` mudar.
+            // Antes (Sonnet I3): id era o fingerprint full → O(n) por re-render.
+            .task(id: storeFingerprintCheap) {
                 patientStore.recompute(checkIns: checkIns, assessments: assessments, alerts: alerts, reports: reports)
             }
             .onAppear {
@@ -1161,6 +1206,9 @@ struct ContentView: View {
                 remoteCaregivers = []
                 remoteAuditLogs = []
                 linkedClinicians = []
+                // Sprint A: drafts encriptados ainda guardavam mood/anxiety/
+                // journal/safetyContact do usuário anterior. Limpa tudo.
+                clearAllLocalPHIDrafts()
                 isShowingSessionExpiredAlert = true
             }
             .alert("Sessão expirada", isPresented: $isShowingSessionExpiredAlert) {
@@ -1448,6 +1496,9 @@ struct ContentView: View {
                             }
                             .toggleStyle(.switch)
                             .tint(.neuroOrange)
+                            // Sprint A: identifier herdado da view `privacyConsent` órfã
+                            // (removida nesta sprint) para o UI test seguir achando este switch.
+                            .accessibilityIdentifier("privacyConsentToggle")
                             .accessibilityHint("Ao aceitar, você libera o salvamento do seu primeiro registro diário.")
                         }
                     }
@@ -1606,41 +1657,10 @@ struct ContentView: View {
         return "Ok"
     }
 
-    private var privacyConsent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "lock.shield")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Consentimento e privacidade")
-                        .font(.headline)
-
-                    Text("Dados sensíveis devem ser tratados com consentimento explícito, minimização, controle de acesso e regras compatíveis com LGPD/HIPAA antes de uso em produção.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Toggle("Aceito registrar dados clínicos neste dispositivo", isOn: consentBinding)
-                .toggleStyle(.switch)
-                .font(.callout.weight(.semibold))
-                .accessibilityIdentifier("privacyConsentToggle")
-
-            Toggle("Autorizo compartilhar relatórios com o médico assistente", isOn: shareWithClinicianBinding)
-                .toggleStyle(.switch)
-                .font(.callout.weight(.semibold))
-                .disabled(!canSaveClinicalData)
-
-            Toggle("Autorizo enviar alertas e relatórios ao cuidador", isOn: $shareWithCaregiver)
-                .toggleStyle(.switch)
-                .font(.callout.weight(.semibold))
-                .disabled(!canSaveClinicalData)
-        }
-        .panelStyle()
-    }
+    // Sprint A: a view `privacyConsent` foi removida — era órfã (zero callers
+    // desde Sprint 19/20). O Toggle de consent agora vive inline no
+    // safeAreaInset do diário (linhas 1446-1457) e o accessibilityIdentifier
+    // "privacyConsentToggle" foi propagado pra lá para o UI test seguir verde.
 
     /// "Hoje" tab content — streak + banner de convites + status + diário.
     /// Sprint 23 adicionou o `streakBanner` no topo para reforço positivo.
@@ -2210,10 +2230,17 @@ struct ContentView: View {
                 .accessibilityHint("Salva o check-in do dia com humor, sono, gatilhos e diário no histórico local e sincroniza com o backend.")
 
                 if !saveStatusMessage.isEmpty {
-                    Label(saveStatusMessage, systemImage: "checkmark.circle")
+                    // Sprint A: antes a mesma view exibia "salvo" e "falha ao
+                    // sincronizar" sempre em verde com checkmark — erro virava
+                    // sucesso visual. Detecta palavra-chave e ajusta semântica.
+                    let isError = saveStatusMessage.localizedCaseInsensitiveContains("falha")
+                        || saveStatusMessage.localizedCaseInsensitiveContains("não foi possível")
+                        || saveStatusMessage.localizedCaseInsensitiveContains("erro")
+                    Label(saveStatusMessage, systemImage: isError ? "exclamationmark.triangle.fill" : "checkmark.circle")
                         .font(.callout.weight(.semibold))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(isError ? .orange : .green)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel((isError ? "Erro: " : "Sucesso: ") + saveStatusMessage)
                 }
             }
             .panelStyle()
@@ -3038,6 +3065,27 @@ struct ContentView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                            // Sprint A: confirmation dialog antes de aplicar.
+                            .confirmationDialog(
+                                roleChangePending == .clinician
+                                    ? "Trocar para perfil médico?"
+                                    : "Trocar para perfil paciente?",
+                                isPresented: Binding(
+                                    get: { roleChangePending != nil },
+                                    set: { if !$0 { roleChangePending = nil } }
+                                ),
+                                titleVisibility: .visible
+                            ) {
+                                Button(roleChangePending == .clinician ? "Alternar para médico" : "Alternar para paciente") {
+                                    if let pending = roleChangePending {
+                                        applyRoleChange(pending)
+                                    }
+                                    roleChangePending = nil
+                                }
+                                Button("Cancelar", role: .cancel) { roleChangePending = nil }
+                            } message: {
+                                Text("A troca muda o dashboard ativo e os dados visíveis. Você pode reverter a qualquer momento.")
+                            }
 
                             PrivacyStatusGrid(
                                 consentAccepted: patients.first?.consentAccepted == true,
@@ -3849,14 +3897,26 @@ struct ContentView: View {
         )
     }
 
+    // Sprint A: agora o setter pede confirmação antes de aplicar (toque
+    // acidental no segmented picker antes trocava silenciosamente para perfil
+    // médico e a TabView raiz sumia). Também adicionado `try? modelContext.save()`
+    // que o setter original esquecia — SwiftData auto-save podia não persistir
+    // antes de crash, perdendo a troca.
     private var roleBinding: Binding<AccessRole> {
         Binding(
             get: { activeRole },
             set: { newValue in
-                let patient = ensurePatient()
-                patient.activeRole = newValue.rawValue
+                if newValue != activeRole {
+                    roleChangePending = newValue
+                }
             }
         )
+    }
+
+    private func applyRoleChange(_ role: AccessRole) {
+        let patient = ensurePatient()
+        patient.activeRole = role.rawValue
+        try? modelContext.save()
     }
 
     private func prepareInitialData() {
@@ -3870,6 +3930,7 @@ struct ContentView: View {
         loadMedicationPlans()
         loadCustomSymptoms()
         loadOfflineSyncQueue()
+        startNetworkMonitor()
         if autoBackupEnabled && backupURL == nil
             && FileManager.default.fileExists(atPath: BackupStore.protectedFileURL.path) {
             backupURL = BackupStore.protectedFileURL
@@ -3953,6 +4014,19 @@ struct ContentView: View {
         persistCustomSymptoms()
     }
 
+    // N-I2: start a persistent NWPathMonitor that flushes the offline sync
+    // queue whenever the network path becomes satisfied. Cancels any previous
+    // monitor to avoid double-firing on hot reloads.
+    private func startNetworkMonitor() {
+        networkMonitor.cancel()
+        networkMonitor = NWPathMonitor()
+        networkMonitor.pathUpdateHandler = { [self] path in
+            guard path.status == .satisfied else { return }
+            DispatchQueue.main.async { retryPendingSync() }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+    }
+
     private func loadOfflineSyncQueue() {
         guard !offlineSyncQueueData.isEmpty, let data = offlineSyncQueueData.data(using: .utf8) else {
             return
@@ -3999,6 +4073,16 @@ struct ContentView: View {
     }
 
     private func saveDailyCheckIn() {
+        // Sprint A (NEW-2): debounce contra double-tap. M5 colocou
+        // @Attribute(.unique) dayKey em DailyCheckIn — duas execuções
+        // simultâneas com mesmo dayKey quebram o SwiftData store no save.
+        // O upsert abaixo verifica `checkIns.first(where:)`, mas as duas
+        // execuções podem ler dayKey ausente, ambas inserir e estourar a
+        // unique constraint no `try modelContext.save()`.
+        guard !isSavingCheckIn else { return }
+        isSavingCheckIn = true
+        defer { isSavingCheckIn = false }
+
         saveStatusMessage = ""
 
         let todayKey = DailyCheckIn.dayKey(for: Date())
@@ -4054,6 +4138,17 @@ struct ContentView: View {
             modelContext.insert(ClinicalAlert(level: alertLevel, title: alertLevel.alertTitle, message: "\(textAssessment.explanation) \(textAssessment.recommendation)"))
         }
 
+        // Sprint A — fluxo de crise (NEW-1): capturar AGORA os flags que
+        // dependem do estado pré-reset. Antes:
+        //   1. `journalEntry = ""` rodava em (linha do reset), aí logo abaixo
+        //      `if journalEntry.trim.isEmpty` era SEMPRE true → postSaveSheet
+        //      disparava sempre, inclusive em crise.
+        //   2. `safetyStatus = .safe` resetava antes do paciente ver feedback
+        //      de que a equipe foi acionada — `CrisisSupportCard` sumia.
+        let wasUrgent = (safetyStatus == .urgent) || hasCriticalSafetyRisk
+        let hadEmptyJournal = journalEntry
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
         do {
             try modelContext.save()
             sideEffects = ""
@@ -4066,12 +4161,19 @@ struct ContentView: View {
             routineChangeTrigger = false
             menstrualTrigger = false
             customTriggers = []
-            safetyStatus = .safe
-            saveStatusMessage = "Registro diário salvo no histórico."
+            // Em crise: NÃO resetar safetyStatus (mantém CrisisSupportCard
+            // visível) e dar feedback explícito de que a equipe foi alertada.
+            if wasUrgent {
+                saveStatusMessage = "Registro salvo e equipe de cuidado alertada. Continue acompanhando o plano de segurança abaixo."
+            } else {
+                safetyStatus = .safe
+                saveStatusMessage = "Registro diário salvo no histórico."
+            }
             hasSeenMoodCoachmark = true
-            // Sprint 23: oferece adicionar texto sem fricção logo após o
-            // save — só dispara se o paciente ainda não escreveu nada.
-            if journalEntry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Sprint 23 + Sprint A: só dispara o sheet de "anotação leve" se
+            // o paciente NÃO estava em crise (essa UI seria deslocada) e se o
+            // journal estava vazio ANTES do reset desta sessão de save.
+            if !wasUrgent && hadEmptyJournal {
                 postSaveThought = ""
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     isShowingPostSavePrompt = true
@@ -4277,7 +4379,16 @@ struct ContentView: View {
         reportPreview = text
         reportPDFURL = makePDFReport(text: text)
         reportCSVURL = makeCSVReport()
-        modelContext.insert(ClinicalReport(summary: text, riskLevel: summary.riskLevel))
+        let coveredCheckIns = sortedCheckIns.prefix(14)
+        modelContext.insert(ClinicalReport(
+            summary: text,
+            riskLevel: summary.riskLevel,
+            clinicianName: patients.first?.clinicianName ?? "",
+            periodStart: coveredCheckIns.last?.date ?? Date(),
+            periodEnd: coveredCheckIns.first?.date ?? Date(),
+            scalesIncluded: Array(Set(sortedAssessments.prefix(10).map(\.scaleName))).sorted(),
+            algorithmVersion: "2.0"
+        ))
         reportStatusMessage = ""
 
         do {
@@ -4298,85 +4409,53 @@ struct ContentView: View {
         reportCSVURL = makeCSVReport()
     }
 
+    /// Encrypt a PHI string field for the backup JSON.
+    /// Returns the base-64 AES-GCM ciphertext, or an empty string on failure
+    /// (never falls back to plaintext — dropping is safer).
+    private func encryptField(_ value: String) -> String {
+        DraftStore.encryptString(value) ?? ""
+    }
+
     private func makeBackupExport(silent: Bool = false) {
-        let formatter = ISO8601DateFormatter()
-        let checkInPayload = sortedCheckIns.map { checkIn in
-            [
-                "date": formatter.string(from: checkIn.date),
-                "mood": checkIn.mood,
-                "anxiety": checkIn.anxiety,
-                "energy": checkIn.energy,
-                "irritability": checkIn.irritability,
-                "sleepHours": checkIn.sleepHours,
-                "appetite": checkIn.appetite,
-                "libido": checkIn.libido,
-                "medicationTaken": checkIn.medicationTaken,
-                "sideEffects": checkIn.sideEffects,
-                "automaticThoughts": checkIn.automaticThoughts,
-                "suicidalIdeation": checkIn.suicidalIdeation,
-                "journalEntry": checkIn.journalEntry
-            ] as [String: Any]
-        }
-        let assessmentPayload = sortedAssessments.map { assessment in
-            [
-                "date": formatter.string(from: assessment.date),
-                "scaleName": assessment.scaleName,
-                "score": assessment.score,
-                "interpretation": assessment.interpretation,
-                "answers": assessment.answers
-            ] as [String: Any]
-        }
-        let payload: [String: Any] = [
-            "exportedAt": formatter.string(from: Date()),
-            "profile": [
-                "email": authenticatedEmail,
-                "role": activeRole.rawValue,
-                "careFocus": selectedCareFocus.rawValue
-            ],
-            "medicationPlan": [
-                "name": medicationName,
-                "dose": medicationDose,
-                "schedule": medicationSchedule,
-                "prescription": medicationPrescription,
-                "changeNote": medicationChangeNote
-            ],
-            "medicationPlans": medicationPlans.map { entry in
-                [
-                    "id": entry.id.uuidString,
-                    "name": entry.name,
-                    "dose": entry.dose,
-                    "schedule": entry.schedule,
-                    "prescription": entry.prescription,
-                    "changeNote": entry.changeNote,
-                    "createdAt": formatter.string(from: entry.createdAt)
-                ]
+        // N-I5: single canonical format via NeuroFlowBackupSnapshot (Codable).
+        // N-C1: PHI text fields are AES-GCM encrypted before serialisation.
+        //       Email is omitted — not required to restore clinical records.
+        let snapshot = NeuroFlowBackupSnapshot(
+            profile: .init(role: activeRole.rawValue, careFocus: selectedCareFocus.rawValue),
+            medicationPlan: .init(
+                name: medicationName, dose: medicationDose, schedule: medicationSchedule,
+                prescriptionEnc: encryptField(medicationPrescription),
+                changeNoteEnc: encryptField(medicationChangeNote)
+            ),
+            medicationPlans: medicationPlans,
+            customSymptoms: customSymptoms,
+            safetyPlan: .init(
+                contactEnc: encryptField(safetyContact),
+                warningSignsEnc: encryptField(safetyWarningSigns),
+                strategiesEnc: encryptField(safetyStrategies)
+            ),
+            offlineQueue: offlineSyncQueue,
+            checkIns: sortedCheckIns.map { c in
+                DailyCheckInSnapshot(
+                    date: c.date, dayKey: c.dayKey,
+                    mood: c.mood, anxiety: c.anxiety, energy: c.energy,
+                    irritability: c.irritability, sleepHours: c.sleepHours,
+                    appetite: c.appetite, libido: c.libido,
+                    medicationTaken: c.medicationTaken, suicidalIdeation: c.suicidalIdeation,
+                    sideEffectsEnc: encryptField(c.sideEffects),
+                    automaticThoughtsEnc: encryptField(c.automaticThoughts),
+                    journalEntryEnc: encryptField(c.journalEntry)
+                )
             },
-            "customSymptom": [
-                "name": customSymptomName,
-                "value": customSymptomValue
-            ],
-            "customSymptoms": customSymptoms.map { symptom in
-                [
-                    "id": symptom.id.uuidString,
-                    "name": symptom.name,
-                    "value": symptom.value,
-                    "createdAt": formatter.string(from: symptom.createdAt)
-                ]
-            },
-            "safetyPlan": [
-                "contact": safetyContact,
-                "warningSigns": safetyWarningSigns,
-                "strategies": safetyStrategies
-            ],
-            "checkIns": checkInPayload,
-            "assessments": assessmentPayload
-        ]
+            assessments: sortedAssessments.map { a in
+                ScaleAssessmentSnapshot(date: a.date, scaleName: a.scaleName,
+                                        answers: a.answers, score: a.score,
+                                        interpretation: a.interpretation)
+            }
+        )
 
         do {
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            // S15/C1: write directly to the protected Documents file.
-            // .completeFileProtection encrypts at rest; isExcludedFromBackup
-            // prevents iCloud from ever picking up this file.
+            let data = try snapshot.encodedData()
             var url = BackupStore.protectedFileURL
             try data.write(to: url, options: [.atomic, .completeFileProtection])
             var resourceValues = URLResourceValues()
@@ -4384,13 +4463,9 @@ struct ContentView: View {
             try? url.setResourceValues(resourceValues)
             backupURL = url
             lastAutomaticBackupAt = Date().timeIntervalSince1970
-            if !silent {
-                loginStatusMessage = "Backup gerado."
-            }
+            if !silent { loginStatusMessage = "Backup gerado." }
         } catch {
-            if !silent {
-                loginStatusMessage = "Não foi possível gerar backup."
-            }
+            if !silent { loginStatusMessage = "Não foi possível gerar backup." }
         }
     }
 
@@ -4863,24 +4938,73 @@ struct ContentView: View {
     }
 
     private func restoreBackup(from data: Data) throws {
-        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return
+        // N-I5: parse via the canonical NeuroFlowBackupSnapshot type.
+        // Falls back to legacy [String:Any] parsing for files produced
+        // before schema v2 (missing schemaVersion key).
+        if let snapshot = try? NeuroFlowBackupSnapshot.decode(from: data) {
+            try restoreFromSnapshot(snapshot)
+        } else {
+            try restoreFromLegacyPayload(data)
         }
+
+        var importedURL = BackupStore.protectedFileURL
+        if (try? data.write(to: importedURL, options: [.atomic, .completeFileProtection])) != nil {
+            var resourceValues = URLResourceValues()
+            resourceValues.isExcludedFromBackup = true
+            try? importedURL.setResourceValues(resourceValues)
+            backupURL = importedURL
+        }
+    }
+
+    private func restoreFromSnapshot(_ snapshot: NeuroFlowBackupSnapshot) throws {
+        let existingDayKeys = Set(checkIns.map(\.dayKey))
+        for c in snapshot.checkIns {
+            guard !existingDayKeys.contains(c.dayKey) else { continue }
+            modelContext.insert(DailyCheckIn(
+                date: c.date,
+                mood: c.mood.clamped(to: 0...5), anxiety: c.anxiety.clamped(to: 0...5),
+                energy: c.energy.clamped(to: 0...5), irritability: c.irritability.clamped(to: 0...5),
+                sleepHours: c.sleepHours.clamped(to: 0...24),
+                appetite: c.appetite.clamped(to: 0...5), libido: c.libido.clamped(to: 0...5),
+                medicationTaken: c.medicationTaken,
+                sideEffects: decryptField(c.sideEffectsEnc),
+                automaticThoughts: decryptField(c.automaticThoughtsEnc),
+                suicidalIdeation: c.suicidalIdeation,
+                journalEntry: decryptField(c.journalEntryEnc)
+            ))
+        }
+        let existingAssessments = assessments
+        for a in snapshot.assessments {
+            let alreadyExists = existingAssessments.contains {
+                $0.scaleName == a.scaleName && abs($0.date.timeIntervalSince(a.date)) < 1
+            }
+            guard !alreadyExists else { continue }
+            modelContext.insert(ScaleAssessment(
+                scaleName: a.scaleName, date: a.date,
+                answers: a.answers.map { min(max($0, 0), 8) },
+                score: max(a.score, 0), interpretation: String(a.interpretation.prefix(500))
+            ))
+        }
+        medicationPlans = snapshot.medicationPlans
+        persistMedicationPlans()
+        customSymptoms = snapshot.customSymptoms
+        persistCustomSymptoms()
+        safetyContact = decryptField(snapshot.safetyPlan.contactEnc, fallback: safetyContact)
+        safetyWarningSigns = decryptField(snapshot.safetyPlan.warningSignsEnc, fallback: safetyWarningSigns)
+        safetyStrategies = decryptField(snapshot.safetyPlan.strategiesEnc, fallback: safetyStrategies)
+        try modelContext.save()
+    }
+
+    /// Legacy path for backups produced before schema v2.
+    private func restoreFromLegacyPayload(_ data: Data) throws {
+        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let formatter = ISO8601DateFormatter()
-
-        // B6: validate ranges so a tampered or partially-corrupted backup
-        // can't poison the SwiftData store with mood=99 or sleepHours=-3.
-        // B7: dedup by (date) for check-ins and by (date, scale) for
-        // assessments so re-importing the same backup is idempotent.
-
         if let checkInPayloads = payload["checkIns"] as? [[String: Any]] {
             let existingCheckIns = checkIns
             for item in checkInPayloads {
                 let date = (item["date"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
                 let importedDayKey = DailyCheckIn.dayKey(for: date)
-                let alreadyExists = existingCheckIns.contains { $0.dayKey == importedDayKey }
-                guard !alreadyExists else { continue }
-
+                guard !existingCheckIns.contains(where: { $0.dayKey == importedDayKey }) else { continue }
                 modelContext.insert(DailyCheckIn(
                     date: date,
                     mood: clampedScalar(item["mood"], range: 0...5, fallback: 3),
@@ -4891,79 +5015,35 @@ struct ContentView: View {
                     appetite: clampedScalar(item["appetite"], range: 0...5, fallback: 3),
                     libido: clampedScalar(item["libido"], range: 0...5, fallback: 3),
                     medicationTaken: item["medicationTaken"] as? Bool ?? false,
-                    sideEffects: sanitizedString(item["sideEffects"]),
-                    automaticThoughts: sanitizedString(item["automaticThoughts"]),
+                    sideEffects: decryptField(item["sideEffects"]),
+                    automaticThoughts: decryptField(item["automaticThoughts"]),
                     suicidalIdeation: item["suicidalIdeation"] as? Bool ?? false,
-                    journalEntry: sanitizedString(item["journalEntry"])
+                    journalEntry: decryptField(item["journalEntry"])
                 ))
             }
         }
-
         if let assessmentPayloads = payload["assessments"] as? [[String: Any]] {
             let existingAssessments = assessments
             for item in assessmentPayloads {
                 let date = (item["date"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
                 let scaleName = sanitizedString(item["scaleName"], fallback: "Escala")
-                let alreadyExists = existingAssessments.contains {
+                guard !existingAssessments.contains(where: {
                     $0.scaleName == scaleName && abs($0.date.timeIntervalSince(date)) < 1
-                }
-                guard !alreadyExists else { continue }
-
+                }) else { continue }
                 let answers = (item["answers"] as? [Int] ?? []).map { min(max($0, 0), 8) }
-                let score = max(item["score"] as? Int ?? 0, 0)
                 modelContext.insert(ScaleAssessment(
-                    scaleName: scaleName,
-                    date: date,
-                    answers: answers,
-                    score: score,
+                    scaleName: scaleName, date: date, answers: answers,
+                    score: max(item["score"] as? Int ?? 0, 0),
                     interpretation: sanitizedString(item["interpretation"])
                 ))
             }
         }
-
-        if let medicationPayloads = payload["medicationPlans"] as? [[String: Any]] {
-            medicationPlans = medicationPayloads.map { item in
-                MedicationPlanEntry(
-                    id: (item["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID(),
-                    name: item["name"] as? String ?? "",
-                    dose: item["dose"] as? String ?? "",
-                    schedule: item["schedule"] as? String ?? "",
-                    prescription: item["prescription"] as? String ?? "",
-                    changeNote: item["changeNote"] as? String ?? "",
-                    createdAt: (item["createdAt"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
-                )
-            }
-            persistMedicationPlans()
-        }
-
-        if let symptomPayloads = payload["customSymptoms"] as? [[String: Any]] {
-            customSymptoms = symptomPayloads.map { item in
-                CustomSymptomEntry(
-                    id: (item["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID(),
-                    name: item["name"] as? String ?? "",
-                    value: item["value"] as? Double ?? 3,
-                    createdAt: (item["createdAt"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
-                )
-            }
-            persistCustomSymptoms()
-        }
-
         if let safetyPlan = payload["safetyPlan"] as? [String: Any] {
-            safetyContact = safetyPlan["contact"] as? String ?? safetyContact
-            safetyWarningSigns = safetyPlan["warningSigns"] as? String ?? safetyWarningSigns
-            safetyStrategies = safetyPlan["strategies"] as? String ?? safetyStrategies
+            safetyContact = decryptField(safetyPlan["contact"], fallback: safetyContact)
+            safetyWarningSigns = decryptField(safetyPlan["warningSigns"], fallback: safetyWarningSigns)
+            safetyStrategies = decryptField(safetyPlan["strategies"], fallback: safetyStrategies)
         }
-
         try modelContext.save()
-        // S15/C1: persist the imported data to the protected file so it
-        // feeds future background-task verifications and the share sheet.
-        var importedURL = BackupStore.protectedFileURL
-        if (try? data.write(to: importedURL, options: [.atomic, .completeFileProtection])) != nil {
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            try? importedURL.setResourceValues(resourceValues)
-            backupURL = importedURL
-        }
     }
 
     /// Best-effort coercion of an Any? backup field into a Double clamped
@@ -4995,6 +5075,19 @@ struct ContentView: View {
         guard let value = raw as? String else { return fallback }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return String(trimmed.prefix(8_000))
+    }
+
+    /// Decrypt a PHI field from the backup JSON (N-C1).
+    /// Falls back to treating the value as plaintext for backward compatibility
+    /// with backups created before encryption was introduced.
+    private func decryptField(_ raw: Any?, fallback: String = "") -> String {
+        guard let value = raw as? String, !value.isEmpty else { return fallback }
+        // Try to decrypt — if it fails, the value may be a legacy plaintext field.
+        if let decrypted = DraftStore.decryptString(value) {
+            return String(decrypted.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8_000))
+        }
+        // Legacy plaintext fallback (backups before N-C1 fix).
+        return sanitizedString(raw, fallback: fallback)
     }
 
     @MainActor
@@ -5617,6 +5710,33 @@ struct ContentView: View {
         remoteAlerts = []
         remoteReports = []
         pendingClinicianInvites = []
+        // Sprint A: drafts encriptados (mood/anxiety/journal/safetyContact etc.)
+        // ainda ficavam no DraftStore após logout — PHI do usuário A visível
+        // ao usuário B no mesmo device. Limpa tudo no logout e no listener
+        // de sessionExpired.
+        clearAllLocalPHIDrafts()
+    }
+
+    /// Sprint A: limpa todos os @EncryptedDraft + safetyStatus. Chamado em
+    /// `logout()` e no listener `.neuroFlowSessionExpired` para garantir que
+    /// PHI do usuário anterior não vaza para o próximo login no mesmo device.
+    /// Setar a property re-escreve ciphertext com o defaultValue (não vaza
+    /// PHI) e também limpa o @State cached em memória do EncryptedDraft.
+    private func clearAllLocalPHIDrafts() {
+        mood = 3.0
+        anxiety = 2.0
+        energy = 3.0
+        irritability = 1.0
+        sleepHours = 7.0
+        appetite = 3.0
+        libido = 3.0
+        sideEffects = ""
+        automaticThoughts = ""
+        journalEntry = ""
+        safetyContact = ""
+        safetyWarningSigns = ""
+        safetyStrategies = ""
+        safetyStatus = .safe
     }
 
     @MainActor
@@ -9816,70 +9936,6 @@ private struct SafetyStatusCard: View {
     }
 }
 
-private struct EmojiChoiceCard: View {
-    let emoji: String
-    let title: String
-    let subtitle: String
-    let activeText: String
-    let inactiveText: String
-    let color: Color
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                isOn.toggle()
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Text(emoji)
-                    .font(.system(size: 34))
-                    .frame(width: 54, height: 54)
-                    .background(color.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-
-                Spacer()
-
-                Text(isOn ? activeText : inactiveText)
-                    .font(.caption.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(color.opacity(0.18))
-                    .foregroundStyle(color)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            .padding(12)
-            .background(
-                LinearGradient(
-                    colors: [color.opacity(isOn ? 0.16 : 0.07), Color(.secondarySystemGroupedBackground)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(color.opacity(isOn ? 0.45 : 0.16), lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title): \(isOn ? activeText : inactiveText)")
-    }
-}
-
 private struct VisualMetricPicker: View {
     let title: String
     let icon: String
@@ -10430,7 +10486,10 @@ private struct AccessGateCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Use a aba Segurança para selecionar perfil médico e habilitar compartilhamento autorizado.")
+            // Sprint A: a "aba Segurança" não existe — desde Sprint 19 as tabs
+            // raiz são Hoje / Corpo / Evolução / Ferramentas, e o perfil de
+            // acesso vive em Configurações.
+            Text("Acesse Configurações → Perfil de acesso para alternar para o perfil médico e habilitar compartilhamento autorizado.")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -11138,10 +11197,10 @@ private extension View {
 // fazia O(n log n) por causa do .sorted, mais o passo do ClinicalAnalysis.
 //
 // Estratégia minimalista: `isReady` começa false, fica true após o primeiro
-// recompute disparado pelo .task(id: storeFingerprint) no body raiz.
-// no body raiz. Os 3 callsites originais (sortedCheckIns/sortedAssessments/
-// summary computeds) fazem cache-first com fallback ao recompute — não foi
-// preciso mexer nos ~30 callsites que consomem essas properties.
+// recompute disparado pelo .task(id: storeFingerprint) no body raiz. Os 3
+// callsites originais (sortedCheckIns/sortedAssessments/summary computeds)
+// fazem cache-first com fallback ao recompute — não foi preciso mexer nos
+// ~30 callsites que consomem essas properties.
 //
 // Não cacheia `neuroFlowRiskSignature` porque ela depende de inputs voláteis
 // (mood/anxiety/ppgStress/voicePauseRatio mudam em tempo real). Mas ela
@@ -11168,6 +11227,12 @@ final class PatientStore {
         activeAlerts = alerts.filter { !$0.acknowledged }.sorted { $0.date > $1.date }
         latestReports = reports.sorted { $0.date > $1.date }
         summary = ClinicalAnalysis.summary(checkIns: sortedC, assessments: sortedA)
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 

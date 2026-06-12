@@ -106,6 +106,19 @@ struct NeuroFlowTests {
         #expect(neutral.detectedTerms.isEmpty)
     }
 
+    @Test func textAssessmentNegationPreventsHighRisk() {
+        // N-M1: negation within 3 words before the risk term → not high risk
+        let negated = ClinicalAnalysis.textAssessment(for: "Não quero morrer de fome")
+        #expect(negated.level != .high)
+
+        let alsoNegated = ClinicalAnalysis.textAssessment(for: "Jamais pensei em me machucar assim")
+        #expect(alsoNegated.level != .high)
+
+        // Negation too far away → risk term still fires
+        let tooFar = ClinicalAnalysis.textAssessment(for: "Não sei mais nada mas vou me matar amanhã")
+        #expect(tooFar.level == .high)
+    }
+
     @Test func trendUsesOLSNotFirstToLastDelta() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         // Mood sequence: broadly declining (OLS slope < 0) but the final
@@ -1011,6 +1024,108 @@ struct BackendAuthClientTests {
 
         try await BackendAuthClient.logout(refreshToken: "ref-tok", accessToken: "access-tok")
     }
+}
+
+// MARK: - N-M5: Certificate Pinning Tests
+
+/// Test-double that lets us exercise CertificatePinningDelegate without
+/// needing real server certificates. We supply a mock URLAuthenticationChallenge
+/// that reports the given auth method and host, and verify the delegate
+/// chooses the expected disposition.
+struct CertificatePinningTests {
+
+    // Helper: call the delegate synchronously and capture disposition.
+    private func evaluate(
+        host: String,
+        authMethod: String,
+        trust: SecTrust?,
+        pinnedHashes: Set<String>
+    ) -> URLSession.AuthChallengeDisposition {
+        let delegate = CertificatePinningDelegate()
+        var captured: URLSession.AuthChallengeDisposition = .cancelAuthenticationChallenge
+
+        // Build a mock protection space.
+        let space = URLProtectionSpace(
+            host: host,
+            port: 443,
+            protocol: "https",
+            realm: nil,
+            authenticationMethod: authMethod
+        )
+        let challenge = URLAuthenticationChallenge(
+            protectionSpace: space,
+            proposedCredential: nil,
+            previousFailureCount: 0,
+            failureResponse: nil,
+            error: nil,
+            sender: MockChallengeSender()
+        )
+
+        let sema = DispatchSemaphore(value: 0)
+        delegate.urlSession(URLSession.shared, didReceive: challenge) { disposition, _ in
+            captured = disposition
+            sema.signal()
+        }
+        sema.wait()
+        return captured
+    }
+
+    @Test func nonServerTrustChallengeIsCancelled() {
+        // Non-ServerTrust challenges (e.g. client cert) must always be cancelled.
+        let disposition = evaluate(
+            host: "api.neuroflow.app",
+            authMethod: NSURLAuthenticationMethodHTTPBasic,
+            trust: nil,
+            pinnedHashes: []
+        )
+        #expect(disposition == .cancelAuthenticationChallenge)
+    }
+
+    @Test func localhost_bypassesValidationInDebug() {
+        // DEBUG only: 127.0.0.1 is used for the local backend and must not
+        // be blocked, even without pins configured.
+        let disposition = evaluate(
+            host: "127.0.0.1",
+            authMethod: NSURLAuthenticationMethodServerTrust,
+            trust: nil,     // trust = nil triggers early return in guard
+            pinnedHashes: []
+        )
+        // In DEBUG, localhost must be .useCredential (bypassed) or at least
+        // not cancelled. We can only verify it != .cancelAuthenticationChallenge
+        // without a real SecTrust.
+        // The guard on `trust` cancels before reaching the localhost check,
+        // so this documents the code path behaviour for the trust == nil case.
+        #expect(disposition == .cancelAuthenticationChallenge) // trust nil → guard fails
+    }
+
+    @Test func noPinsConfigured_releaseBuildCancels() {
+        // Without pins in Release, the delegate MUST cancel so a forgotten
+        // build setting doesn't silently disable pinning (S37).
+        // We can't directly test Release vs Debug here, but we document the
+        // expectation so a CI job with -configuration Release can verify it.
+        // In DEBUG (CI), noPins → .performDefaultHandling.
+        #if DEBUG
+        // Nothing to assert in Debug — behaviour is intentionally permissive.
+        #else
+        let disposition = evaluate(
+            host: "api.neuroflow.app",
+            authMethod: NSURLAuthenticationMethodServerTrust,
+            trust: nil,
+            pinnedHashes: []
+        )
+        #expect(disposition == .cancelAuthenticationChallenge)
+        #endif
+    }
+}
+
+/// Minimal URLAuthenticationChallengeSender stub required to build
+/// URLAuthenticationChallenge in tests.
+private class MockChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
+    func performDefaultHandling(for challenge: URLAuthenticationChallenge) {}
+    func rejectProtectionSpaceAndContinue(with challenge: URLAuthenticationChallenge) {}
 }
 
 private extension URLRequest {

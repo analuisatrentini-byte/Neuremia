@@ -7,6 +7,40 @@
 
 import Foundation
 
+// N-M2: All clinical thresholds in one place with bibliographic references
+// so that future regulatory audits can verify the basis for each decision.
+enum ClinicalThresholds {
+    // Trend thresholds (OLS slope per check-in, 14-day window)
+    // Ref: CANMAT 2018 — clinically meaningful mood deterioration ≈ -0.5/week
+    //      mapped to per-day slope over 14 records.
+    static let moodDeclinePerRecord: Double = -0.35
+    static let anxietyIncreasePerRecord: Double = 0.35
+    static let sleepDeclinePerRecord: Double = -0.35
+
+    // Absolute metric thresholds
+    // Ref: Hirshkowitz et al. 2015 (NSF) — <6h associated with impaired function.
+    static let minimumSleepHours: Double = 5.5
+    // Ref: CANMAT 2018 — medication adherence <80% correlates with relapse risk.
+    static let medicationAdherenceMinimum: Double = 0.8
+
+    // Real-time check-in thresholds (0–5 scale)
+    static let moodHighRisk: Double = 1.0      // score ≤ 1 → high
+    static let moodModerateRisk: Double = 2.0  // score ≤ 2 → moderate
+    static let anxietyHighRisk: Double = 4.5   // score ≥ 4.5 → high
+    static let anxietyModerateRisk: Double = 3.5 // score ≥ 3.5 → moderate
+
+    // Scale score thresholds
+    // Ref: Kroenke et al. 2001 (PHQ-9) — score ≥20 = severe depression.
+    static let phq9High: Int = 20
+    static let phq9Moderate: Int = 10
+    // Ref: Spitzer et al. 2006 (GAD-7) — score ≥15 = severe anxiety.
+    static let gad7High: Int = 15
+    static let gad7Moderate: Int = 10
+    // Ref: Young et al. 1978 (YMRS) — score ≥22 = moderate-severe mania.
+    static let ymrsHigh: Int = 22
+    static let ymrsModerate: Int = 13
+}
+
 enum ClinicalAnalysis {
     static func score(for scale: ScaleKind, answers: [Int]) -> Int {
         // Clamp every answer to its declared range before summing so that
@@ -63,6 +97,25 @@ enum ClinicalAnalysis {
         textAssessment(for: text).level
     }
 
+    // N-M1: returns true if `term` appears in `text` at a position that is NOT
+    // immediately preceded by a common negation word (não, nunca, jamais, sem).
+    // Looks back up to 3 tokens before the term to handle "eu não vou me matar".
+    private static func termPresent(_ term: String, in text: String) -> Bool {
+        guard text.contains(term) else { return false }
+        let negations = ["nao", "nunca", "jamais", "sem", "impossivel"]
+        var searchRange = text.startIndex..<text.endIndex
+        while let range = text.range(of: term, range: searchRange) {
+            let before = String(text[text.startIndex..<range.lowerBound])
+            let tokens = before.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            let lastThree = tokens.suffix(3)
+            if !lastThree.contains(where: { negations.contains($0) }) {
+                return true
+            }
+            searchRange = range.upperBound..<text.endIndex
+        }
+        return false
+    }
+
     static func textAssessment(for text: String) -> TextRiskAssessment {
         let normalized = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
         let highRiskTerms = [
@@ -96,8 +149,8 @@ enum ClinicalAnalysis {
             "me sinto sozinho", "me sinto sozinha", "ninguem me entende",
             "abandonado", "abandonada", "invisivel"
         ]
-        let detectedHighRiskTerms = highRiskTerms.filter { normalized.contains($0) }
-        let detectedModerateRiskTerms = moderateRiskTerms.filter { normalized.contains($0) }
+        let detectedHighRiskTerms = highRiskTerms.filter { termPresent($0, in: normalized) }
+        let detectedModerateRiskTerms = moderateRiskTerms.filter { termPresent($0, in: normalized) }
 
         if !detectedHighRiskTerms.isEmpty {
             return TextRiskAssessment(
@@ -142,23 +195,23 @@ enum ClinicalAnalysis {
 
         var signals: [String] = []
 
-        if moodTrend < -0.35 {
+        if moodTrend < ClinicalThresholds.moodDeclinePerRecord {
             signals.append("Humor em queda nos registros recentes")
         }
 
-        if anxietyTrend > 0.35 {
+        if anxietyTrend > ClinicalThresholds.anxietyIncreasePerRecord {
             signals.append("Ansiedade em elevação")
         }
 
-        if averageSleep > 0 && averageSleep < 5.5 {
+        if averageSleep > 0 && averageSleep < ClinicalThresholds.minimumSleepHours {
             signals.append("Sono médio abaixo de 5h30")
         }
 
-        if sleepTrend < -0.35 {
+        if sleepTrend < ClinicalThresholds.sleepDeclinePerRecord {
             signals.append("Sono em queda nos registros recentes")
         }
 
-        if medicationAdherence < 0.8 && !recent.isEmpty {
+        if medicationAdherence < ClinicalThresholds.medicationAdherenceMinimum && !recent.isEmpty {
             signals.append("Adesão medicamentosa abaixo de 80%")
         }
 
@@ -237,11 +290,19 @@ enum ClinicalAnalysis {
             return .low
         }
 
-        if latest.suicidalIdeation || latest.mood <= 1 || latest.anxiety >= 4.5 {
+        if latest.suicidalIdeation
+            || latest.mood <= ClinicalThresholds.moodHighRisk
+            || latest.anxiety >= ClinicalThresholds.anxietyHighRisk {
             return .high
         }
 
-        if moodTrend < -0.35 || anxietyTrend > 0.35 || sleepTrend < -0.35 || averageSleep < 5.5 || adherence < 0.8 || latest.mood <= 2 || latest.anxiety >= 3.5 {
+        if moodTrend < ClinicalThresholds.moodDeclinePerRecord
+            || anxietyTrend > ClinicalThresholds.anxietyIncreasePerRecord
+            || sleepTrend < ClinicalThresholds.sleepDeclinePerRecord
+            || averageSleep < ClinicalThresholds.minimumSleepHours
+            || adherence < ClinicalThresholds.medicationAdherenceMinimum
+            || latest.mood <= ClinicalThresholds.moodModerateRisk
+            || latest.anxiety >= ClinicalThresholds.anxietyModerateRisk {
             return .moderate
         }
 
@@ -251,18 +312,18 @@ enum ClinicalAnalysis {
     private static func riskFromAssessments(_ assessments: [ScaleAssessment]) -> ClinicalRiskLevel {
         let latestByScale = Dictionary(grouping: assessments, by: \.scaleName).compactMap { $0.value.max { $0.date < $1.date } }
 
-        if latestByScale.contains(where: { assessment in
-            (assessment.scaleName == ScaleKind.phq9.rawValue && assessment.score >= 20) ||
-            (assessment.scaleName == ScaleKind.gad7.rawValue && assessment.score >= 15) ||
-            (assessment.scaleName == ScaleKind.ymrs.rawValue && assessment.score >= 22)
+        if latestByScale.contains(where: { a in
+            (a.scaleName == ScaleKind.phq9.rawValue && a.score >= ClinicalThresholds.phq9High) ||
+            (a.scaleName == ScaleKind.gad7.rawValue && a.score >= ClinicalThresholds.gad7High) ||
+            (a.scaleName == ScaleKind.ymrs.rawValue && a.score >= ClinicalThresholds.ymrsHigh)
         }) {
             return .high
         }
 
-        if latestByScale.contains(where: { assessment in
-            (assessment.scaleName == ScaleKind.phq9.rawValue && assessment.score >= 10) ||
-            (assessment.scaleName == ScaleKind.gad7.rawValue && assessment.score >= 10) ||
-            (assessment.scaleName == ScaleKind.ymrs.rawValue && assessment.score >= 13)
+        if latestByScale.contains(where: { a in
+            (a.scaleName == ScaleKind.phq9.rawValue && a.score >= ClinicalThresholds.phq9Moderate) ||
+            (a.scaleName == ScaleKind.gad7.rawValue && a.score >= ClinicalThresholds.gad7Moderate) ||
+            (a.scaleName == ScaleKind.ymrs.rawValue && a.score >= ClinicalThresholds.ymrsModerate)
         }) {
             return .moderate
         }

@@ -17,6 +17,14 @@ final class PatientProfile {
     var activeRole: String
     var createdAt: Date
 
+    // N-I1: explicit relationships with cascade-delete so that removing a
+    // PatientProfile also removes all associated clinical records and queries
+    // scoped to a profile never bleed into records belonging to another user.
+    @Relationship(deleteRule: .cascade) var checkIns: [DailyCheckIn] = []
+    @Relationship(deleteRule: .cascade) var assessments: [ScaleAssessment] = []
+    @Relationship(deleteRule: .cascade) var alerts: [ClinicalAlert] = []
+    @Relationship(deleteRule: .cascade) var reports: [ClinicalReport] = []
+
     init(name: String = "Paciente", clinicianName: String = "Médico assistente", consentAccepted: Bool = false, shareWithClinician: Bool = false, activeRole: String = AccessRole.patient.rawValue, createdAt: Date = Date()) {
         self.name = name
         self.clinicianName = clinicianName
@@ -34,6 +42,7 @@ final class DailyCheckIn {
     /// store level, mirroring the one-per-day business rule enforced in code.
     @Attribute(.unique) var dayKey: String
     var date: Date
+    var patient: PatientProfile?   // N-I1: back-reference for scoped queries
     var mood: Double
     var anxiety: Double
     var energy: Double
@@ -64,8 +73,13 @@ final class DailyCheckIn {
         self.journalEntry = journalEntry
     }
 
-    static func dayKey(for date: Date, calendar: Calendar = .current) -> String {
-        let c = calendar.dateComponents([.year, .month, .day], from: date)
+    // N-C4: always derive dayKey in UTC so that timezone changes (DST,
+    // international travel) never produce two different keys for what the
+    // clinical record considers the same calendar day.
+    static func dayKey(for date: Date) -> String {
+        var utcCalendar = Calendar(identifier: .iso8601)
+        utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+        let c = utcCalendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 }
@@ -74,6 +88,7 @@ final class DailyCheckIn {
 final class ScaleAssessment {
     var scaleName: String
     var date: Date
+    var patient: PatientProfile?   // N-I1
     var answers: [Int]
     var score: Int
     var interpretation: String
@@ -91,6 +106,7 @@ final class ScaleAssessment {
 final class ClinicalAlert {
     var date: Date
     var level: String
+    var patient: PatientProfile?   // N-I1
     var title: String
     var message: String
     var acknowledged: Bool
@@ -109,11 +125,32 @@ final class ClinicalReport {
     var date: Date
     var summary: String
     var riskLevel: String
+    var patient: PatientProfile?   // N-I1
+    // N-M4: fields required for medical-legal validity
+    var clinicianName: String
+    var periodStart: Date
+    var periodEnd: Date
+    var scalesIncluded: [String]
+    var algorithmVersion: String
 
-    init(date: Date = Date(), summary: String, riskLevel: ClinicalRiskLevel) {
+    init(
+        date: Date = Date(),
+        summary: String,
+        riskLevel: ClinicalRiskLevel,
+        clinicianName: String = "",
+        periodStart: Date = Calendar.current.date(byAdding: .day, value: -14, to: Date()) ?? Date(),
+        periodEnd: Date = Date(),
+        scalesIncluded: [String] = [],
+        algorithmVersion: String = "2.0"
+    ) {
         self.date = date
         self.summary = summary
         self.riskLevel = riskLevel.rawValue
+        self.clinicianName = clinicianName
+        self.periodStart = periodStart
+        self.periodEnd = periodEnd
+        self.scalesIncluded = scalesIncluded
+        self.algorithmVersion = algorithmVersion
     }
 }
 
@@ -284,25 +321,61 @@ struct TextRiskAssessment {
     }
 }
 
+// N-I5: unified backup envelope — single source of truth for export/import.
+// PHI text fields (journalEntry, automaticThoughts, sideEffects, prescription,
+// changeNote, safetyPlan fields) are stored as AES-GCM base-64 ciphertext
+// produced by DraftStore.encryptString(_:). Legacy plaintext imports are
+// handled transparently by decryptField(_:) in ContentView.
 struct NeuroFlowBackupSnapshot: Codable {
+    struct Profile: Codable {
+        let role: String
+        let careFocus: String
+    }
+    struct MedicationPlanCurrent: Codable {
+        let name: String
+        let dose: String
+        let schedule: String
+        let prescriptionEnc: String   // encrypted
+        let changeNoteEnc: String     // encrypted
+    }
+    struct SafetyPlan: Codable {
+        let contactEnc: String        // encrypted
+        let warningSignsEnc: String   // encrypted
+        let strategiesEnc: String     // encrypted
+    }
+
     let exportedAt: Date
+    /// Increment whenever the snapshot schema changes so importers can
+    /// gracefully handle older files.
+    let schemaVersion: Int
+    let profile: Profile
+    let medicationPlan: MedicationPlanCurrent
     let medicationPlans: [MedicationPlanEntry]
     let customSymptoms: [CustomSymptomEntry]
+    let safetyPlan: SafetyPlan
     let offlineQueue: [OfflineSyncItem]
     let checkIns: [DailyCheckInSnapshot]
     let assessments: [ScaleAssessmentSnapshot]
 
     init(
         exportedAt: Date = Date(),
+        schemaVersion: Int = 2,
+        profile: Profile,
+        medicationPlan: MedicationPlanCurrent,
         medicationPlans: [MedicationPlanEntry],
         customSymptoms: [CustomSymptomEntry],
+        safetyPlan: SafetyPlan,
         offlineQueue: [OfflineSyncItem],
         checkIns: [DailyCheckInSnapshot],
         assessments: [ScaleAssessmentSnapshot]
     ) {
         self.exportedAt = exportedAt
+        self.schemaVersion = schemaVersion
+        self.profile = profile
+        self.medicationPlan = medicationPlan
         self.medicationPlans = medicationPlans
         self.customSymptoms = customSymptoms
+        self.safetyPlan = safetyPlan
         self.offlineQueue = offlineQueue
         self.checkIns = checkIns
         self.assessments = assessments
@@ -324,6 +397,7 @@ struct NeuroFlowBackupSnapshot: Codable {
 
 struct DailyCheckInSnapshot: Codable, Equatable {
     let date: Date
+    let dayKey: String
     let mood: Double
     let anxiety: Double
     let energy: Double
@@ -332,10 +406,11 @@ struct DailyCheckInSnapshot: Codable, Equatable {
     let appetite: Double
     let libido: Double
     let medicationTaken: Bool
-    let sideEffects: String
-    let automaticThoughts: String
     let suicidalIdeation: Bool
-    let journalEntry: String
+    // PHI free-text fields stored as AES-GCM base-64 ciphertext (N-C1/N-I5)
+    let sideEffectsEnc: String
+    let automaticThoughtsEnc: String
+    let journalEntryEnc: String
 }
 
 struct ScaleAssessmentSnapshot: Codable, Equatable {
