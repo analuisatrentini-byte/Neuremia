@@ -618,6 +618,13 @@ struct ContentView: View {
     @State private var scaleStatusMessage = ""
     @State private var reportStatusMessage = ""
     @State private var selectedPatientPage = PatientPage.diary
+    // M2 (UX-P0): seções recolhíveis do diário — reduz carga cognitiva
+    // para pacientes com pouca energia. Todas abertas por padrão.
+    @State private var diarySection1Expanded = true  // "Como você está?"
+    @State private var diarySection2Expanded = true  // "Segurança e medicação"
+    @State private var diarySection3Expanded = true  // "Texto livre e gatilhos"
+    // M5 (UX-P0): aba ativa no TabView do clínico
+    @State private var clinicianTab: ClinicianTab = .patients
     // Sprint A: confirmação antes de aplicar troca de perfil de acesso.
     // Toque acidental no Picker antes mudava a TabView raiz sem aviso.
     @State private var roleChangePending: AccessRole?
@@ -1407,21 +1414,184 @@ struct ContentView: View {
 
     // MARK: - Root containers (Sprint 19 / U1' — TabView raiz para paciente)
 
+    // M5 (UX-P0): clínico agora tem TabView própria — antes era um único
+    // scroll vertical com todos os contextos misturados (lista de pacientes,
+    // análise clínica, relatórios). Cada aba tem NavigationStack própria;
+    // o detalhe do paciente navega por push, não expande inline.
     @ViewBuilder
     private var clinicianRoot: some View {
+        TabView(selection: $clinicianTab) {
+            clinicianPatientsTab
+                .tabItem { Label(ClinicianTab.patients.rawValue, systemImage: ClinicianTab.patients.icon) }
+                .tag(ClinicianTab.patients)
+            clinicianAnalysisTab
+                .tabItem { Label(ClinicianTab.analysis.rawValue, systemImage: ClinicianTab.analysis.icon) }
+                .tag(ClinicianTab.analysis)
+            clinicianReportsTab
+                .tabItem { Label(ClinicianTab.reports.rawValue, systemImage: ClinicianTab.reports.icon) }
+                .tag(ClinicianTab.reports)
+        }
+        .tint(.neuroOrange)
+    }
+
+    // Aba 1: lista de pacientes + detalhe via push
+    @ViewBuilder
+    private var clinicianPatientsTab: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
-                    doctorDashboard
+                    if !canViewClinicianData {
+                        AccessGateCard(
+                            activeRole: activeRole,
+                            hasSharingConsent: patients.first?.shareWithClinician == true
+                        )
+                        .padding(20)
+                    } else {
+                        VStack(alignment: .leading, spacing: 16) {
+                            clinicianPatientsSection
+                            clinicianSentInvitesSection
+                        }
+                        .padding(20)
+                    }
+                }
+            }
+            .background(appBackground)
+            .navigationTitle("Pacientes")
+            .navigationBarTitleDisplayMode(.large)
+            .privacySensitive(true)
+            .toolbar { toolbarContent }
+            // Push navigation para o detalhe do paciente (M5)
+            .navigationDestination(for: BackendUser.self) { patient in
+                clinicianPatientDetailPage(for: patient)
+            }
+        }
+    }
+
+    // Aba 2: análise clínica agregada
+    @ViewBuilder
+    private var clinicianAnalysisTab: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if !canViewClinicianData {
+                        AccessGateCard(
+                            activeRole: activeRole,
+                            hasSharingConsent: patients.first?.shareWithClinician == true
+                        )
+                    } else {
+                        RiskSummaryCard(summary: summary)
+                        TextRiskCard(title: "Classificação textual longitudinal", assessment: summary.textAssessment)
+                        ClinicianPopulationRiskCard(signature: neuroFlowRiskSignature, alerts: activeAlerts, checkIns: sortedCheckIns, remotePatients: clinicianPatients)
+                        ClinicianPreConsultInsightCard(
+                            summary: summary,
+                            checkIns: sortedCheckIns,
+                            assessments: sortedAssessments,
+                            medicationPlans: medicationPlans,
+                            signature: neuroFlowRiskSignature
+                        )
+                        longitudinalTrendsSection
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(summary.signals, id: \.self) { signal in
+                                ClinicalSignal(icon: "chart.line.uptrend.xyaxis", title: signal, description: "Sinal calculado a partir dos registros diários, escalas e análise textual.")
+                            }
+                        }
+                        .panelStyle()
+                        alertsSection
+                    }
                 }
                 .padding(20)
             }
             .background(appBackground)
-            .navigationTitle("NeuroFlow")
+            .navigationTitle("Análise")
             .navigationBarTitleDisplayMode(.large)
             .privacySensitive(true)
             .toolbar { toolbarContent }
+        }
+    }
+
+    // Aba 3: relatórios
+    @ViewBuilder
+    private var clinicianReportsTab: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if !canViewClinicianData {
+                        AccessGateCard(
+                            activeRole: activeRole,
+                            hasSharingConsent: patients.first?.shareWithClinician == true
+                        )
+                    } else {
+                        reportSection
+                    }
+                }
+                .padding(20)
+            }
+            .background(appBackground)
+            .navigationTitle("Relatórios")
+            .navigationBarTitleDisplayMode(.large)
+            .privacySensitive(true)
+            .toolbar { toolbarContent }
+        }
+    }
+
+    // Tela de detalhe do paciente — empurrada via NavigationLink (M5).
+    // Carrega dados remotos ao entrar e apresenta as sub-tabs com labels.
+    @ViewBuilder
+    private func clinicianPatientDetailPage(for patient: BackendUser) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Sub-tabs com ícone + label (M5 + P1-10)
+                Picker("Seção", selection: $remotePatientSubTab) {
+                    ForEach(RemotePatientSubTab.allCases) { tab in
+                        Label(tab.rawValue, systemImage: tab.icon)
+                            .tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+
+                if !remotePatientStatusMessage.isEmpty && remotePatientStatusMessage != "Dados carregados." {
+                    Text(remotePatientStatusMessage)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                }
+
+                Group {
+                    if isLoadingRemotePatientData {
+                        remotePatientSkeleton
+                    } else {
+                        switch remotePatientSubTab {
+                        case .overview:
+                            RemotePatientSnapshotCard(
+                                patient: patient,
+                                checkIns: remoteCheckIns,
+                                assessments: remoteAssessments,
+                                alerts: remoteAlerts,
+                                reports: remoteReports
+                            )
+                        case .checkIns:
+                            remotePatientCheckInsList
+                        case .assessments:
+                            remotePatientAssessmentsList
+                        case .alerts:
+                            remotePatientAlertsList
+                        case .reports:
+                            remotePatientReportsList
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .padding(.vertical, 16)
+        }
+        .background(appBackground)
+        .navigationTitle(patient.fullName)
+        .navigationBarTitleDisplayMode(.inline)
+        .privacySensitive(true)
+        .task(id: patient.id) {
+            await loadRemotePatientData(patient)
         }
     }
 
@@ -1479,10 +1649,20 @@ struct ContentView: View {
                         .controlSize(.large)
                         .accessibilityHint("Salva o registro de hoje no histórico local e sincroniza com o backend.")
                     } else if let patient = patients.first {
+                        // M4 (UX-P0): antes o botão ficava desabilitado sem
+                        // nenhuma explicação visível. Agora exibimos a razão
+                        // do bloqueio e o toggle de consentimento lado a lado,
+                        // eliminando o estado silencioso de "botão cinza".
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Para começar")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                Image(systemName: "lock.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                Text("Ative o consentimento para salvar seus registros.")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             Toggle(isOn: Binding(
                                 get: { patient.consentAccepted },
                                 set: { newValue in
@@ -1736,20 +1916,15 @@ struct ContentView: View {
             }
 
             toolsGroup(title: "Acompanhamento", icon: "stethoscope", tint: .blue) {
-                toolRow(
+                // M3 (UX-P0): navega diretamente ao scalesDashboard sem a
+                // tela intermediária ScaleAccessCard, eliminando 1 toque extra.
+                toolRowButton(
                     icon: "list.clipboard.fill",
                     label: "Check-up estruturado",
-                    subtitle: "PHQ-9 · GAD-7 · YMRS",
-                    destination: AnyView(
-                        scrollableDetail(title: "Check-up estruturado") {
-                            ScaleAccessCard(
-                                isShowingScales: $isShowingScales,
-                                cadence: summary.cadence,
-                                recentAssessmentCount: sortedAssessments.count
-                            )
-                        }
-                    )
-                )
+                    subtitle: "PHQ-9 · GAD-7 · YMRS (\(sortedAssessments.count) realizados)"
+                ) {
+                    isShowingScales = true
+                }
                 toolRow(
                     icon: "flame.fill",
                     label: "Engajamento",
@@ -1851,6 +2026,45 @@ struct ContentView: View {
         NavigationLink {
             destination
         } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Divider().padding(.leading, 54)
+        }
+    }
+
+    /// Variante de toolRow que executa uma ação imediata em vez de navegar
+    /// para uma tela destino — usada quando a sheet já está disponível na
+    /// raiz (ex.: scalesDashboard via isShowingScales). M3 (UX-P0).
+    private func toolRowButton(
+        icon: String,
+        label: String,
+        subtitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.title3)
@@ -2120,115 +2334,146 @@ struct ContentView: View {
                 retrySync: retryPendingSync
             )
 
+            // M2 (UX-P0): diário dividido em 3 seções recolhíveis para reduzir
+            // carga cognitiva. Pacientes com baixa energia podem expandir apenas
+            // o que precisam preencher, sem rolar uma tela única interminável.
             VStack(alignment: .leading, spacing: 16) {
-                MoodWheelCard(mood: $mood, anxiety: $anxiety, energy: $energy)
 
-                Text("Toque no estado que mais combina com hoje")
-                    .font(.headline)
+                // ── Seção 1: Como você está? ─────────────────────────────────
+                DisclosureGroup(isExpanded: $diarySection1Expanded) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        MoodWheelCard(mood: $mood, anxiety: $anxiety, energy: $energy)
 
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                    // Rótulos qualitativos sem prefixo numérico — paciente
-                    // pensa em "Muito difícil" / "Ótimo", não em "1" / "5".
-                    VisualMetricPicker(title: "Humor", icon: "face.smiling", value: $mood, options: [
-                        MetricOption(label: "Muito difícil", value: 1, color: .red),
-                        MetricOption(label: "Difícil", value: 2, color: .orange),
-                        MetricOption(label: "Regular", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Bem", value: 4, color: .green),
-                        MetricOption(label: "Ótimo", value: 5, color: .green)
-                    ])
+                        Text("Toque no estado que mais combina com hoje")
+                            .font(.headline)
 
-                    VisualMetricPicker(title: "Ansiedade", icon: "waveform.path.ecg", value: $anxiety, options: [
-                        MetricOption(label: "Tranquilo", value: 1, color: .green),
-                        MetricOption(label: "Leve", value: 2, color: .green),
-                        MetricOption(label: "Média", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Alta", value: 4, color: .orange),
-                        MetricOption(label: "Pico", value: 5, color: .red)
-                    ])
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            // Rótulos qualitativos sem prefixo numérico — paciente
+                            // pensa em "Muito difícil" / "Ótimo", não em "1" / "5".
+                            VisualMetricPicker(title: "Humor", icon: "face.smiling", value: $mood, options: [
+                                MetricOption(label: "Muito difícil", value: 1, color: .red),
+                                MetricOption(label: "Difícil", value: 2, color: .orange),
+                                MetricOption(label: "Regular", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Bem", value: 4, color: .green),
+                                MetricOption(label: "Ótimo", value: 5, color: .green)
+                            ])
 
-                    VisualMetricPicker(title: "Energia", icon: "bolt", value: $energy, options: [
-                        MetricOption(label: "Exausto", value: 1, color: .red),
-                        MetricOption(label: "Baixa", value: 2, color: .orange),
-                        MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Boa", value: 4, color: .green),
-                        MetricOption(label: "Alta", value: 5, color: .green)
-                    ])
+                            VisualMetricPicker(title: "Ansiedade", icon: "waveform.path.ecg", value: $anxiety, options: [
+                                MetricOption(label: "Tranquilo", value: 1, color: .green),
+                                MetricOption(label: "Leve", value: 2, color: .green),
+                                MetricOption(label: "Média", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Alta", value: 4, color: .orange),
+                                MetricOption(label: "Pico", value: 5, color: .red)
+                            ])
 
-                    VisualMetricPicker(title: "Irritabilidade", icon: "exclamationmark.bubble", value: $irritability, options: [
-                        MetricOption(label: "Calmo", value: 1, color: .green),
-                        MetricOption(label: "Leve", value: 2, color: .green),
-                        MetricOption(label: "Média", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Alta", value: 4, color: .orange),
-                        MetricOption(label: "Pico", value: 5, color: .red)
-                    ])
+                            VisualMetricPicker(title: "Energia", icon: "bolt", value: $energy, options: [
+                                MetricOption(label: "Exausto", value: 1, color: .red),
+                                MetricOption(label: "Baixa", value: 2, color: .orange),
+                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Boa", value: 4, color: .green),
+                                MetricOption(label: "Alta", value: 5, color: .green)
+                            ])
 
-                    VisualMetricPicker(title: "Sono", icon: "moon.zzz", value: $sleepHours, options: [
-                        MetricOption(label: "<4h", value: 4, color: .red),
-                        MetricOption(label: "5h", value: 5, color: .orange),
-                        MetricOption(label: "6h", value: 6, color: .neuroYellow),
-                        MetricOption(label: "7h", value: 7, color: .green),
-                        MetricOption(label: "8h+", value: 8, color: .green)
-                    ], suffix: "h")
+                            VisualMetricPicker(title: "Irritabilidade", icon: "exclamationmark.bubble", value: $irritability, options: [
+                                MetricOption(label: "Calmo", value: 1, color: .green),
+                                MetricOption(label: "Leve", value: 2, color: .green),
+                                MetricOption(label: "Média", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Alta", value: 4, color: .orange),
+                                MetricOption(label: "Pico", value: 5, color: .red)
+                            ])
 
-                    VisualMetricPicker(title: "Apetite", icon: "fork.knife", value: $appetite, options: [
-                        MetricOption(label: "Muito baixo", value: 1, color: .red),
-                        MetricOption(label: "Baixo", value: 2, color: .orange),
-                        MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Alto", value: 4, color: .orange),
-                        MetricOption(label: "Voraz", value: 5, color: .red)
-                    ])
+                            VisualMetricPicker(title: "Sono", icon: "moon.zzz", value: $sleepHours, options: [
+                                MetricOption(label: "<4h", value: 4, color: .red),
+                                MetricOption(label: "5h", value: 5, color: .orange),
+                                MetricOption(label: "6h", value: 6, color: .neuroYellow),
+                                MetricOption(label: "7h", value: 7, color: .green),
+                                MetricOption(label: "8h+", value: 8, color: .green)
+                            ], suffix: "h")
 
-                    VisualMetricPicker(title: "Libido", icon: "heart", value: $libido, options: [
-                        MetricOption(label: "Muito baixa", value: 1, color: .red),
-                        MetricOption(label: "Baixa", value: 2, color: .orange),
-                        MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                        MetricOption(label: "Alta", value: 4, color: .orange),
-                        MetricOption(label: "Muito alta", value: 5, color: .red)
-                    ])
-                }
+                            VisualMetricPicker(title: "Apetite", icon: "fork.knife", value: $appetite, options: [
+                                MetricOption(label: "Muito baixo", value: 1, color: .red),
+                                MetricOption(label: "Baixo", value: 2, color: .orange),
+                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Alto", value: 4, color: .orange),
+                                MetricOption(label: "Voraz", value: 5, color: .red)
+                            ])
 
-                DailySafetyChoices(
-                    medicationStatus: $medicationStatus,
-                    safetyStatus: $safetyStatus
-                )
-
-                MedicationPlanCard(
-                    medicationName: $medicationName,
-                    medicationDose: $medicationDose,
-                    medicationSchedule: $medicationSchedule,
-                    medicationPrescription: $medicationPrescription,
-                    medicationChangeNote: $medicationChangeNote,
-                    medicationPlans: medicationPlans,
-                    addMedication: addMedicationPlan,
-                    removeMedication: removeMedicationPlan
-                )
-
-                CustomSymptomCard(
-                    symptomName: $customSymptomName,
-                    symptomValue: $customSymptomValue,
-                    symptoms: customSymptoms,
-                    addSymptom: addCustomSymptom,
-                    removeSymptom: removeCustomSymptom
-                )
-
-                LabeledTextEditor(title: "Efeitos colaterais", systemImage: "pills", placeholder: "Ex.: sonolência, náusea, agitação", text: $sideEffects)
-                LabeledTextEditor(title: "Pensamentos do dia", systemImage: "bubble.left.and.text.bubble.right", placeholder: "Ex.: pensamentos que apareceram várias vezes hoje", text: $automaticThoughts)
-                LabeledTextEditor(title: "Meu diário", systemImage: "square.and.pencil", placeholder: "Escreva como foi seu dia, sono, acontecimentos e o que quiser lembrar depois.", text: $journalEntry)
-                    .onChange(of: journalEntry) { _, newValue in
-                        updateTypingSignals(text: newValue)
+                            VisualMetricPicker(title: "Libido", icon: "heart", value: $libido, options: [
+                                MetricOption(label: "Muito baixa", value: 1, color: .red),
+                                MetricOption(label: "Baixa", value: 2, color: .orange),
+                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                MetricOption(label: "Alta", value: 4, color: .orange),
+                                MetricOption(label: "Muito alta", value: 5, color: .red)
+                            ])
+                        }
                     }
-
-                TextRiskCard(title: "Sinais percebidos no diário", assessment: currentTextAssessment, patientStyle: true)
-
-                Button(action: saveDailyCheckIn) {
-                    Label("Salvar registro diário", systemImage: "tray.and.arrow.down")
-                        .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+                } label: {
+                    Label("Como você está?", systemImage: "face.smiling")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!canSaveClinicalData)
-                .accessibilityIdentifier("saveCheckInButton")
-                .accessibilityHint("Salva o check-in do dia com humor, sono, gatilhos e diário no histórico local e sincroniza com o backend.")
 
+                Divider()
+
+                // ── Seção 2: Segurança e medicação ───────────────────────────
+                DisclosureGroup(isExpanded: $diarySection2Expanded) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        DailySafetyChoices(
+                            medicationStatus: $medicationStatus,
+                            safetyStatus: $safetyStatus
+                        )
+
+                        MedicationPlanCard(
+                            medicationName: $medicationName,
+                            medicationDose: $medicationDose,
+                            medicationSchedule: $medicationSchedule,
+                            medicationPrescription: $medicationPrescription,
+                            medicationChangeNote: $medicationChangeNote,
+                            medicationPlans: medicationPlans,
+                            addMedication: addMedicationPlan,
+                            removeMedication: removeMedicationPlan
+                        )
+
+                        CustomSymptomCard(
+                            symptomName: $customSymptomName,
+                            symptomValue: $customSymptomValue,
+                            symptoms: customSymptoms,
+                            addSymptom: addCustomSymptom,
+                            removeSymptom: removeCustomSymptom
+                        )
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("Segurança e medicação", systemImage: "pills")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                }
+
+                Divider()
+
+                // ── Seção 3: Texto livre e gatilhos ──────────────────────────
+                DisclosureGroup(isExpanded: $diarySection3Expanded) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        LabeledTextEditor(title: "Efeitos colaterais", systemImage: "pills", placeholder: "Ex.: sonolência, náusea, agitação", text: $sideEffects)
+                        LabeledTextEditor(title: "Pensamentos do dia", systemImage: "bubble.left.and.text.bubble.right", placeholder: "Ex.: pensamentos que apareceram várias vezes hoje", text: $automaticThoughts)
+                        LabeledTextEditor(title: "Meu diário", systemImage: "square.and.pencil", placeholder: "Escreva como foi seu dia, sono, acontecimentos e o que quiser lembrar depois.", text: $journalEntry)
+                            .onChange(of: journalEntry) { _, newValue in
+                                updateTypingSignals(text: newValue)
+                            }
+
+                        TextRiskCard(title: "Sinais percebidos no diário", assessment: currentTextAssessment, patientStyle: true)
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("Texto livre e gatilhos", systemImage: "square.and.pencil")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                }
+
+                // M1 (UX-P0): o botão de salvar foi movido para o safeAreaInset
+                // fixo no rodapé da aba — o botão duplicado foi removido para
+                // eliminar a ambiguidade de dois CTAs idênticos na mesma tela.
                 if !saveStatusMessage.isEmpty {
                     // Sprint A: antes a mesma view exibia "salvo" e "falha ao
                     // sincronizar" sempre em verde com checkmark — erro virava
@@ -2747,12 +2992,10 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .padding(.bottom, 4)
 
+                // M5 (UX-P0): NavigationLink(value:) empurra o detalhe como
+                // push em vez de expandir inline — elimina o scroll infinito.
                 ForEach(filteredClinicianPatients, id: \.id) { patient in
-                    Button {
-                        Task {
-                            await loadRemotePatientData(patient)
-                        }
-                    } label: {
+                    NavigationLink(value: patient) {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(patient.fullName)
@@ -2767,8 +3010,8 @@ struct ContentView: View {
                                 }
                             }
                             Spacer()
-                            Image(systemName: selectedRemotePatient?.id == patient.id ? "checkmark.circle.fill" : "chevron.right")
-                                .foregroundStyle(selectedRemotePatient?.id == patient.id ? .green : .secondary)
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -2785,9 +3028,8 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let selectedRemotePatient {
-                remotePatientDetail(for: selectedRemotePatient)
-            }
+            // M5 (UX-P0): detalhe do paciente removido daqui — agora é push
+            // navigation via NavigationLink(value:) em clinicianPatientsTab.
         }
         .panelStyle()
     }
@@ -6466,6 +6708,21 @@ private enum SentInviteStatusFilter: String, CaseIterable, Identifiable {
         case .pending: return "pending"
         case .accepted: return "accepted"
         case .revoked: return "revoked"
+        }
+    }
+}
+
+// M5 (UX-P0): abas do dashboard do clínico — substitui o scroll único.
+private enum ClinicianTab: String, CaseIterable, Identifiable {
+    case patients = "Pacientes"
+    case analysis = "Análise"
+    case reports  = "Relatórios"
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .patients: "person.2"
+        case .analysis: "chart.xyaxis.line"
+        case .reports:  "doc.text.magnifyingglass"
         }
     }
 }

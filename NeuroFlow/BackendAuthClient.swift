@@ -442,7 +442,7 @@ final class CertificatePinningDelegate: NSObject, URLSessionDelegate {
 
 // MARK: - DTOs
 
-struct BackendUser: Decodable {
+struct BackendUser: Decodable, Hashable {
     let id: Int
     let email: String
     let fullName: String
