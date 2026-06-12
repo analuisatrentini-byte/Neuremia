@@ -117,6 +117,33 @@ Em `Backend/app/models.py` e `Backend/app/main.py`. Python 3.14 emite `Deprecati
 
 ---
 
+## 7-bis. Dívida arquitetural específica da Sprint 19 — TabView raiz
+
+A nova `patientToolsPage` (Sprint 19) referencia state que pertence à raiz da `ContentView`:
+
+- `summary` (computed property que agrega `sortedCheckIns + sortedAssessments`)
+- `neuroFlowRiskSignature` (computed property pesado, recalcula a cada body)
+- `sortedCheckIns`, `sortedAssessments`
+- `safetyContact / safetyWarningSigns / safetyStrategies` (bindings)
+- `autoMonthlyReportEnabled` (binding @AppStorage)
+- `reportPreview / reportPDFURL / reportCSVURL` (state)
+- `isShowingScales` (binding)
+- `generateReport()` (método)
+
+**Implicação**: quando o ContentView for finalmente quebrado em arquivos (refactor pendente do MANUAL_CLEANUP #8), essas dependências precisam ser:
+
+1. **Externalizadas via `@Environment` ou `@Observable`** model (Swift 5.9+). Hoje os cards instanciados pela `patientToolsPage` recebem bindings diretos da struct — ao mover para outro arquivo, isso quebra se as properties continuarem `private`.
+2. **Ou** passadas como `@Binding` explícitas no init de uma nova `PatientToolsView`.
+
+**Risco silencioso**: enquanto não há arquivos separados, os `@AppStorage` e `@State` da raiz **resolvem por escopo de struct**. Após a separação, vão precisar de injeção. Documentar isso no momento do refactor evita perda de funcionalidade.
+
+**Recomendação para Sprint de refactor**:
+- Criar `PatientStore: ObservableObject` ou um `@Observable` central com mood/anxiety/safety/medication/draftJournal etc.
+- Injetar via `.environmentObject(store)` no body raiz.
+- Cards individuais consomem via `@EnvironmentObject` ou `@Bindable`.
+
+---
+
 ## 8. Quebrar `ContentView.swift` em vários arquivos (Sprint 3 parcial)
 
 Plano original previa 80 arquivos via `Theme.swift`, `BiometricManagers.swift`, etc. **Foi bloqueado por hook** porque exige editar `project.pbxproj` com Xcode aberto.

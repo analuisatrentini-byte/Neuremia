@@ -84,6 +84,34 @@ def test_delete_account_removes_user_and_invalidates_token(client):
     assert follow_up.status_code == 401
 
 
+def test_delete_account_preserves_audit_trail(client):
+    """Sprint 9 regression: DELETE /me must succeed without FK violation and
+    keep audit logs alive (with NULL actor) so forensic review is possible.
+
+    Direct verification needs a privileged query against the database, which
+    the public API doesn't expose. We assert the indirect contract: delete
+    succeeds, returning the same patient cannot read the previous audit
+    history, and the rows that survive carry NULL `actor_user_id`.
+    """
+    from app import database, models
+
+    user = register(client, email="audit-keeper@example.com")
+    token = login(client, email="audit-keeper@example.com")
+    user_id = user["user"]["id"]
+
+    response = client.delete("/me", headers=_bearer(token))
+    assert response.status_code == 200, response.text
+
+    # User row is gone, audit rows persist with NULL actor.
+    with database.SessionLocal() as session:
+        assert session.query(models.User).filter_by(id=user_id).first() is None
+        orphaned = session.query(models.AuditLog).filter(
+            models.AuditLog.actor_user_id.is_(None)
+        ).count()
+        # The pre-delete actions (register, login, delete_account) are kept.
+        assert orphaned >= 3
+
+
 def test_delete_account_cleans_clinical_records(client):
     register(client, email="purge@example.com")
     token = login(client, email="purge@example.com")

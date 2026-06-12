@@ -26,6 +26,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # 0) Tabela de consentimentos (LGPD Art. 7 II + Art. 9). Uma linha por
+    #    (user, finalidade); revoked_at marca revogação sem deletar histórico.
+    op.create_table(
+        "consents",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "user_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("purpose", sa.String(length=64), nullable=False),
+        sa.Column("granted_at", sa.DateTime(), nullable=False),
+        sa.Column("revoked_at", sa.DateTime(), nullable=True),
+        sa.Column(
+            "policy_version", sa.String(length=32), nullable=False, server_default=""
+        ),
+        sa.UniqueConstraint("user_id", "purpose", name="uq_consents_user_purpose"),
+    )
+
     # 1) Aumentar capacidade pra acomodar ciphertext Fernet.
     with op.batch_alter_table("users") as batch_op:
         batch_op.alter_column(
@@ -80,6 +101,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_table("consents")
     op.drop_column("users", "locked_until")
     op.drop_column("users", "failed_login_count")
     # Não decriptamos no downgrade (chave pode não estar disponível). Apenas

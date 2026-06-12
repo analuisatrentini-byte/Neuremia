@@ -2,6 +2,27 @@
 
 Este documento descreve a base teorica do NeuroFlow e o que precisa ser validado antes de qualquer uso clinico formal. O sistema deve ser tratado como apoio ao monitoramento e a decisao clinica, nao como diagnostico automatico.
 
+## 0. Referencia DSM-5/DSM-5-TR
+
+O NeuroFlow usa o DSM-5/DSM-5-TR como referencia conceitual para organizar dominios de acompanhamento, sem reproduzir criterios diagnosticos oficiais e sem automatizar diagnostico. O DSM e um sistema de classificacao clinica publicado pela American Psychiatric Association; a versao DSM-5-TR foi publicada em 2022.
+
+Como regra de produto:
+
+- o app nao deve afirmar que o usuario "tem" um transtorno;
+- o app pode acompanhar dominios clinicamente relevantes, como humor, ansiedade, sono, energia, funcionamento, seguranca, gatilhos e adesao;
+- qualquer hipotese diagnostica depende de entrevista clinica, duracao, prejuizo funcional, contexto cultural, exclusoes medicas/substancias e julgamento profissional;
+- as escalas e o score NeuroFlow sao instrumentos de rastreio/monitoramento, nao diagnostico automatico.
+
+Mapeamento de dominios usado no app:
+
+- Bipolaridade: sono, energia/atividade, irritabilidade, humor, adesao e sinais de virada.
+- Depressao: humor, energia, sono, apetite, pensamentos negativos e seguranca.
+- Ansiedade: preocupacao/ansiedade, sono, gatilhos, ativacao corporal e pensamentos repetitivos.
+- Borderline: intensidade emocional, gatilhos interpessoais, impulsividade indireta e seguranca.
+- TDAH: rotina, funcionamento, sono, adesao e consistencia diaria.
+- Pos-parto: contexto periparto, sono, humor, ansiedade, apoio e seguranca.
+- Burnout: monitoramento funcional de estresse/exaustao; nao e categoria diagnostica principal do DSM-5/DSM-5-TR.
+
 ## 1. Escalas clinicas
 
 O app separa escalas validadas do score proprietario NeuroFlow.

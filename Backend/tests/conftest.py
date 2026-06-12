@@ -21,6 +21,10 @@ def _stamp_test_env() -> None:
         "NEUROFLOW_FIELD_ENCRYPTION_KEY",
         "qBJ2VkpKMxFhMQXfYrt3VRPUe6Cz2cQ2Si2dXJI4i3M=",
     )
+    # Allow tests to operate without tripping the slowapi rate limits added
+    # in Sprint 13.
+    os.environ.setdefault("NEUROFLOW_ALLOWED_ORIGINS", "*")
+    os.environ.setdefault("NEUROFLOW_ALLOWED_HOSTS", "*")
 
 
 _stamp_test_env()
@@ -36,7 +40,7 @@ def client(monkeypatch: pytest.MonkeyPatch, db_url: str) -> Iterator:
     monkeypatch.setenv("DATABASE_URL", db_url)
 
     # Import lazily so the DATABASE_URL above is picked up by app.database.
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, event
     from sqlalchemy.orm import sessionmaker
 
     import app.database as database
@@ -46,6 +50,17 @@ def client(monkeypatch: pytest.MonkeyPatch, db_url: str) -> Iterator:
     # Rebuild the engine for the isolated DB and patch the module globals so
     # any caller that resolved them previously still works.
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
+
+    # SQLite does not honor foreign keys (CASCADE / SET NULL) unless this
+    # pragma is explicitly turned on every new connection. Mirrors Postgres
+    # behavior so the CASCADE-driven delete_my_account path (Sprint 15) is
+    # actually exercised by the test suite.
+    @event.listens_for(engine, "connect")
+    def _enable_fk_pragma(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
+
     TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     monkeypatch.setattr(database, "engine", engine, raising=True)
     monkeypatch.setattr(database, "SessionLocal", TestingSession, raising=True)

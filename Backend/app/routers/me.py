@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import current_user, require_role
+from ..security import encrypt_field
 from ..services import (
     alert_read,
     assessment_read,
     audit,
     checkin_read,
+    decrypted_full_name,
     invite_read,
     report_read,
     user_read,
@@ -22,8 +24,123 @@ router = APIRouter(prefix="/me", tags=["me"])
 
 
 @router.get("", response_model=schemas.UserRead)
-def me(user: models.User = Depends(current_user)):
-    return user
+def me(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
+    # Sprint B: decripta full_name antes de devolver pra cliente.
+    return user_read(db, user)
+
+
+# Sprint B (LGPD Art. 18 III — direito à retificação): permite o titular
+# atualizar nome completo e email. Mudança de email checa colisão única —
+# se o email já está em uso por outro user, retorna 409 sem revelar qual
+# user (evita enumeration). Cada alteração gera entrada no audit_log.
+@router.patch("", response_model=schemas.UserRead)
+def update_me(
+    payload: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    changed = False
+    if payload.full_name is not None and payload.full_name != decrypted_full_name(user):
+        # Sprint B: full_name encriptado at rest.
+        user.full_name = encrypt_field(payload.full_name)
+        audit(db, user, "update_full_name", "user", str(user.id))
+        changed = True
+
+    if payload.email is not None and payload.email != user.email:
+        conflict = (
+            db.query(models.User)
+            .filter(models.User.email == payload.email, models.User.id != user.id)
+            .first()
+        )
+        if conflict is not None:
+            raise HTTPException(status_code=409, detail="Email already in use")
+        user.email = payload.email
+        audit(db, user, "update_email", "user", str(user.id))
+        changed = True
+
+    if changed:
+        db.commit()
+        db.refresh(user)
+    return user_read(db, user)
+
+
+# Sprint B / LGPD Art. 7 II + Art. 9: consentimento explícito por finalidade.
+# Granular o suficiente para o paciente revogar pesquisa anônima sem perder
+# o cuidado clínico, ou parar compartilhamento com cuidador sem afetar
+# integração com médico. Histórico de outorga e revogação fica auditável.
+def _consent_read(consent: models.Consent) -> schemas.ConsentRead:
+    return schemas.ConsentRead(
+        id=consent.id,
+        purpose=consent.purpose,
+        granted_at=consent.granted_at,
+        revoked_at=consent.revoked_at,
+        policy_version=consent.policy_version,
+        active=consent.revoked_at is None,
+    )
+
+
+@router.get("/consents", response_model=list[schemas.ConsentRead])
+def list_my_consents(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
+    consents = (
+        db.query(models.Consent)
+        .filter(models.Consent.user_id == user.id)
+        .order_by(models.Consent.granted_at.desc())
+        .all()
+    )
+    return [_consent_read(c) for c in consents]
+
+
+@router.post("/consents", response_model=schemas.ConsentRead)
+def grant_consent(
+    payload: schemas.ConsentGrantRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    # Upsert: se já existe registro para a mesma finalidade, reativa.
+    existing = (
+        db.query(models.Consent)
+        .filter(
+            models.Consent.user_id == user.id,
+            models.Consent.purpose == payload.purpose,
+        )
+        .first()
+    )
+    if existing is None:
+        existing = models.Consent(
+            user_id=user.id,
+            purpose=payload.purpose,
+            policy_version=payload.policy_version,
+        )
+        db.add(existing)
+    else:
+        existing.revoked_at = None
+        existing.granted_at = datetime.utcnow()
+        existing.policy_version = payload.policy_version
+    audit(db, user, "grant_consent", "consent", payload.purpose)
+    db.commit()
+    db.refresh(existing)
+    return _consent_read(existing)
+
+
+@router.delete("/consents/{purpose}", response_model=schemas.ConsentRead)
+def revoke_consent(
+    purpose: schemas.ConsentPurposeLiteral,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    consent = (
+        db.query(models.Consent)
+        .filter(models.Consent.user_id == user.id, models.Consent.purpose == purpose)
+        .first()
+    )
+    if consent is None:
+        raise HTTPException(status_code=404, detail="Consent not found")
+    if consent.revoked_at is None:
+        consent.revoked_at = datetime.utcnow()
+        audit(db, user, "revoke_consent", "consent", purpose)
+        db.commit()
+        db.refresh(consent)
+    return _consent_read(consent)
 
 
 @router.get("/audit-logs", response_model=list[schemas.AuditLogRead])
@@ -169,7 +286,7 @@ def list_my_linked_clinicians(db: Session = Depends(get_db), user: models.User =
         result.append(
             schemas.LinkedClinicianRead(
                 clinician_id=clinician.id,
-                clinician_full_name=clinician.full_name,
+                clinician_full_name=decrypted_full_name(clinician),
                 clinician_email=clinician.email,
                 linked_at=link.created_at,
             )

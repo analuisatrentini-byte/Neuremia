@@ -11,7 +11,35 @@ from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .notifications import notifications
-from .security import create_access_token, decrypt_field, generate_refresh_token
+from .security import create_access_token, decrypt_field, encrypt_field, generate_refresh_token
+
+
+# Sprint B / LGPD: helpers para PHI encriptado at rest. `user.full_name` e
+# `caregiver_contacts.contact` agora são Fernet ciphertext na coluna; toda
+# leitura passa por aqui pra apresentar plaintext, toda escrita passa por
+# encrypt_field nos endpoints.
+def decrypted_full_name(user: models.User | None) -> str:
+    if user is None or not user.full_name:
+        return ""
+    return decrypt_field(user.full_name)
+
+
+def decrypted_caregiver_contact(caregiver: models.CaregiverContact) -> str:
+    if not caregiver.contact:
+        return ""
+    return decrypt_field(caregiver.contact)
+
+
+def caregiver_read(caregiver: models.CaregiverContact) -> schemas.CaregiverContactRead:
+    return schemas.CaregiverContactRead(
+        id=caregiver.id,
+        patient_id=caregiver.patient_id,
+        name=caregiver.name,
+        contact=decrypted_caregiver_contact(caregiver),
+        relationship=caregiver.relationship,
+        share_enabled=caregiver.share_enabled,
+        created_at=caregiver.created_at,
+    )
 
 
 # ---------------------------------------------------------------------- audit
@@ -142,7 +170,7 @@ def invite_read(db: Session, invite: models.ClinicianPatientInvite) -> schemas.C
         id=invite.id,
         clinician_id=invite.clinician_id,
         patient_id=invite.patient_id,
-        clinician_full_name=clinician.full_name if clinician else "",
+        clinician_full_name=decrypted_full_name(clinician),
         clinician_email=clinician.email if clinician else "",
         status=invite.status,
         created_at=invite.created_at,
@@ -154,7 +182,7 @@ def sent_invite_read(db: Session, invite: models.ClinicianPatientInvite) -> sche
     return schemas.ClinicianSentInviteRead(
         id=invite.id,
         patient_id=invite.patient_id,
-        patient_full_name=patient.full_name if patient else "",
+        patient_full_name=decrypted_full_name(patient),
         patient_email=patient.email if patient else "",
         status=invite.status,
         created_at=invite.created_at,
@@ -308,7 +336,7 @@ def user_read(db: Session, user: models.User, include_risk: bool = False) -> sch
     return schemas.UserRead(
         id=user.id,
         email=user.email,
-        full_name=user.full_name,
+        full_name=decrypted_full_name(user),
         role=user.role,
         created_at=user.created_at,
         risk_score=risk_score,
@@ -330,14 +358,17 @@ def notify_enabled_caregivers(
         models.CaregiverContact.patient_id == patient.id,
         models.CaregiverContact.share_enabled == True,  # noqa: E712
     ).all()
+    patient_name = decrypted_full_name(patient)
     for caregiver in caregivers:
+        # Sprint B: contact é ciphertext na coluna; decripta só pra envio SMTP.
+        recipient = decrypted_caregiver_contact(caregiver)
         try:
             sent = notifications.send_clinical_alert_email(
-                caregiver.contact, patient.full_name, title, message
+                recipient, patient_name, title, message
             )
-            log_notification(db, patient.id, caregiver.contact, "email", event_type, sent, title)
+            log_notification(db, patient.id, recipient, "email", event_type, sent, title)
         except Exception:
-            log_notification(db, patient.id, caregiver.contact, "email", event_type, False, "exception")
+            log_notification(db, patient.id, recipient, "email", event_type, False, "exception")
 
 
 def notify_linked_clinicians(
@@ -355,10 +386,11 @@ def notify_linked_clinicians(
         return
 
     clinicians = db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
+    patient_name = decrypted_full_name(patient)
     for clinician in clinicians:
         try:
             sent_email = notifications.send_clinical_alert_email(
-                clinician.email, patient.full_name, title, message
+                clinician.email, patient_name, title, message
             )
             log_notification(db, patient.id, clinician.email, "email", "clinical_alert", sent_email, title)
             tokens = db.query(models.DeviceToken).filter(models.DeviceToken.user_id == clinician.id).all()
@@ -366,7 +398,7 @@ def notify_linked_clinicians(
                 sent_push = notifications.send_push_webhook(
                     token.token,
                     "NeuroFlow",
-                    f"Alerta de {patient.full_name}: {title}",
+                    f"Alerta de {patient_name}: {title}",
                     data={
                         "event_type": "clinical_alert",
                         "patient_id": str(patient.id),
@@ -399,10 +431,11 @@ def notify_linked_clinicians_report(
         return
 
     clinicians = db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
+    patient_name = decrypted_full_name(patient)
     for clinician in clinicians:
         try:
             sent_email = notifications.send_clinical_report_email(
-                clinician.email, patient.full_name, summary
+                clinician.email, patient_name, summary
             )
             log_notification(
                 db, patient.id, clinician.email,
@@ -413,7 +446,7 @@ def notify_linked_clinicians_report(
                 sent_push = notifications.send_push_webhook(
                     token.token,
                     "NeuroFlow",
-                    f"Novo relatório de {patient.full_name}",
+                    f"Novo relatório de {patient_name}",
                     data={
                         "event_type": "clinical_report",
                         "patient_id": str(patient.id),

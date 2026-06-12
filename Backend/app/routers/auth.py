@@ -16,12 +16,13 @@ from ..notifications import notifications
 from ..rate_limit import limiter
 from ..security import (
     decode_access_token_payload,
+    encrypt_field,
     hash_password,
     hash_refresh_token,
     hash_reset_code,
     verify_password,
 )
-from ..services import audit, issue_token_pair
+from ..services import audit, issue_token_pair, user_read
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -38,11 +39,13 @@ def register(
     if existing is not None:
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    # Sprint B / LGPD: full_name encriptado at rest. Response devolve plaintext
+    # via `user_read` (que decripta).
     user = models.User(
         email=payload.email.lower(),
         password_hash=hash_password(payload.password),
         role=models.UserRole.patient.value,
-        full_name=payload.full_name,
+        full_name=encrypt_field(payload.full_name),
     )
     db.add(user)
     db.commit()
@@ -53,16 +56,14 @@ def register(
     return schemas.TokenResponse(
         access_token=access,
         refresh_token=refresh,
-        user=schemas.UserRead(
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            created_at=user.created_at,
-            risk_score=None,
-            risk_level=None,
-        ),
+        user=user_read(db, user),
     )
+
+
+# Sprint B: bloqueio progressivo. Threshold conservador para evitar lockout
+# acidental, escalada de backoff geométrica.
+_FAILED_LOGIN_THRESHOLD = 5
+_FAILED_LOGIN_BACKOFF_BASE_SECONDS = 60
 
 
 @router.post("/login", response_model=schemas.TokenResponse)
@@ -73,8 +74,32 @@ def login(
     db: Session = Depends(get_db),
 ):
     user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
+
+    # Sprint B: bloqueio temporário por conta após N tentativas falhas. Rate
+    # limit por IP (10/min) já existia mas era ineficaz contra credential
+    # stuffing distribuído. O lockout por conta complementa.
+    if user is not None and user.locked_until is not None and user.locked_until > datetime.utcnow():
+        # Mensagem deliberadamente genérica — não revela que a conta existe.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+        )
+
     if user is None or not verify_password(payload.password, user.password_hash):
+        if user is not None:
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if user.failed_login_count >= _FAILED_LOGIN_THRESHOLD:
+                # Backoff geométrico: 5 falhas → 60s, 6 → 120s, 7 → 240s...
+                overflow = user.failed_login_count - _FAILED_LOGIN_THRESHOLD
+                backoff = _FAILED_LOGIN_BACKOFF_BASE_SECONDS * (2 ** overflow)
+                user.locked_until = datetime.utcnow() + timedelta(seconds=backoff)
+                audit(db, user, "login_lockout", "user", str(user.id))
+            db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    # Sucesso: zera contadores.
+    if user.failed_login_count or user.locked_until is not None:
+        user.failed_login_count = 0
+        user.locked_until = None
 
     audit(db, user, "login", "user", str(user.id))
     access, refresh = issue_token_pair(db, user)
@@ -82,15 +107,7 @@ def login(
     return schemas.TokenResponse(
         access_token=access,
         refresh_token=refresh,
-        user=schemas.UserRead(
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            created_at=user.created_at,
-            risk_score=None,
-            risk_level=None,
-        ),
+        user=user_read(db, user),
     )
 
 
@@ -118,15 +135,7 @@ def refresh_session(
     return schemas.TokenResponse(
         access_token=access,
         refresh_token=refresh,
-        user=schemas.UserRead(
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            created_at=user.created_at,
-            risk_score=None,
-            risk_level=None,
-        ),
+        user=user_read(db, user),
     )
 
 

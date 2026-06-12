@@ -46,6 +46,47 @@ def test_admin_purge_requires_admin_key(client):
     assert response.status_code == 401
 
 
+def test_admin_purge_drops_old_revoked_tokens(client, admin_api_key):
+    """Sprint 11: revoked rows older than 1 day must also be reaped so the
+    table doesn't bloat with logged-out sessions."""
+    from app import database, models
+
+    register(client, email="reaper@example.com")
+
+    with database.SessionLocal() as session:
+        token = session.query(models.RefreshToken).first()
+        token.revoked_at = datetime.utcnow() - timedelta(days=2)
+        session.commit()
+
+    response = client.post(
+        "/admin/refresh-tokens/purge",
+        headers={"X-Admin-API-Key": admin_api_key},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted_refresh_tokens"] >= 1
+
+
+def test_admin_purge_skips_fresh_revoked_tokens(client, admin_api_key):
+    """Recently revoked rows (less than 24h) stay so they keep showing up
+    in audit windows."""
+    from app import database, models
+
+    register(client, email="recent-revoke@example.com")
+
+    with database.SessionLocal() as session:
+        token = session.query(models.RefreshToken).first()
+        token.revoked_at = datetime.utcnow() - timedelta(minutes=10)
+        session.commit()
+
+    response = client.post(
+        "/admin/refresh-tokens/purge",
+        headers={"X-Admin-API-Key": admin_api_key},
+    )
+    assert response.status_code == 200
+    # The fresh-revoked token survives; only old/expired ones are reaped.
+    assert response.json()["deleted_refresh_tokens"] == 0
+
+
 # ---------------- FN22 ----------------
 
 def test_invite_reissue_after_revocation(client, admin_api_key):

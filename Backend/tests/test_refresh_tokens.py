@@ -19,8 +19,11 @@ def test_refresh_rotates_token_and_invalidates_old(client):
     rotation = client.post("/auth/refresh", json={"refresh_token": first_refresh})
     assert rotation.status_code == 200
     new_pair = rotation.json()
-    assert new_pair["access_token"] != initial["access_token"]
+    # The refresh token MUST rotate (secrets.token_urlsafe is unique). The
+    # access token may coincide if minted within the same second (same JWT
+    # exp claim); rotation safety hinges on the refresh secret, not the JWT.
     assert new_pair["refresh_token"] != first_refresh
+    assert new_pair["access_token"]
 
     # Old refresh token must no longer be honored.
     replay = client.post("/auth/refresh", json={"refresh_token": first_refresh})

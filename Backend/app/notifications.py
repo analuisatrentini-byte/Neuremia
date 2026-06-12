@@ -10,6 +10,7 @@ import smtplib
 import json
 from email.message import EmailMessage
 from urllib import request
+from urllib.parse import urlparse
 
 
 GENERIC_ALERT_SUBJECT = "NeuroFlow: nova atualizacao clinica"
@@ -35,7 +36,24 @@ class NotificationService:
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.sender = os.getenv("ALERT_FROM_EMAIL", self.smtp_user)
         self.sms_webhook_url = os.getenv("SMS_WEBHOOK_URL", "")
-        self.push_webhook_url = os.getenv("PUSH_WEBHOOK_URL", "")
+        self.push_webhook_url = self._validated_webhook_url(
+            os.getenv("PUSH_WEBHOOK_URL", "")
+        )
+
+    @staticmethod
+    def _validated_webhook_url(raw: str) -> str:
+        """Sprint B: rejeita scheme não-https no PUSH_WEBHOOK_URL para evitar
+        SSRF (`file:///etc/passwd`, `http://internal-svc`, etc). Em dev permite
+        http://localhost para o mock server local."""
+        if not raw:
+            return ""
+        parsed = urlparse(raw)
+        if parsed.scheme == "https":
+            return raw
+        if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+            return raw
+        # Schemes não permitidos: file, ftp, gopher, etc, e http em hosts não-locais.
+        return ""
 
     @property
     def email_enabled(self) -> bool:

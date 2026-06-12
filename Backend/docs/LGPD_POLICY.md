@@ -44,6 +44,16 @@ Este documento e um ponto de partida tecnico. Antes de uso real com pacientes, d
 - Permitir exclusao/anominizacao quando legalmente aplicavel.
 - Registrar solicitacoes de acesso, correcao e exclusao.
 
+## Controles tecnicos ja previstos no backend
+
+- Portabilidade: `GET /me/export` exporta usuario, check-ins, escalas, alertas, relatorios e auditoria.
+- Auditoria: `GET /me/audit-logs` permite consultar eventos associados ao usuario.
+- Retencao: `DELETE /me/clinical-data?days_older_than=365` remove dados clinicos antigos conforme prazo definido.
+- Exclusao: `DELETE /me` remove conta, vinculos, tokens e dados clinicos do usuario no backend.
+- Criptografia de campos sensiveis: diario, pensamentos, efeitos colaterais, mensagens de alerta e relatorios usam Fernet via `NEUROFLOW_FIELD_ENCRYPTION_KEY`.
+
+Esses controles nao substituem revisao juridica. Eles sao base tecnica para implementar direitos do titular, retencao e auditoria.
+
 ## Incidentes
 
 - Definir responsavel por resposta a incidente.

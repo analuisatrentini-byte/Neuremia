@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import require_admin
+from ..services import user_read
 
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -103,12 +104,4 @@ def admin_set_role(user_id: int, payload: schemas.AdminPromoteRequest, db: Sessi
     ))
     db.commit()
     db.refresh(user)
-    return schemas.UserRead(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        role=user.role,
-        created_at=user.created_at,
-        risk_score=None,
-        risk_level=None,
-    )
+    return user_read(db, user)

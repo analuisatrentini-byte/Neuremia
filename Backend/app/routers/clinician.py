@@ -7,6 +7,7 @@ from ..database import get_db
 from ..dependencies import current_user, require_role
 from ..services import (
     audit,
+    decrypted_full_name,
     invite_read,
     patient_risk_summary_batch,
     sent_invite_read,
@@ -57,7 +58,7 @@ def create_clinician_invite(
         id=invite.id,
         clinician_id=invite.clinician_id,
         patient_id=invite.patient_id,
-        clinician_full_name=user.full_name,
+        clinician_full_name=decrypted_full_name(user),
         clinician_email=user.email,
         status=invite.status,
         created_at=invite.created_at,
@@ -113,7 +114,7 @@ def clinician_patients(db: Session = Depends(get_db), user: models.User = Depend
             schemas.UserRead(
                 id=patient.id,
                 email=patient.email,
-                full_name=patient.full_name,
+                full_name=decrypted_full_name(patient),
                 role=patient.role,
                 created_at=patient.created_at,
                 risk_score=score,

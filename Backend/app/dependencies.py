@@ -41,8 +41,12 @@ def current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    # Sprint B: antes a checagem só rejeitava se `epoch` fosse int E menor que o
+    # do usuário. Token sem o claim (legado, malformado, ou forjado por bypass
+    # de issuance) escapava — virava token eterno mesmo após admin_revoke_sessions.
+    # Agora exige `epoch` presente como int E >= token_epoch atual do usuário.
     token_epoch = payload.get("epoch")
-    if isinstance(token_epoch, int) and token_epoch < user.token_epoch:
+    if not isinstance(token_epoch, int) or token_epoch < user.token_epoch:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token issued before session revocation",

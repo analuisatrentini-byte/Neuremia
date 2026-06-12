@@ -6,9 +6,10 @@ uvicorn[standard]>=0.29,<1.0
 sqlalchemy>=2.0,<2.1           # código usa Mapped / mapped_column (2.x)
 alembic>=1.13,<2.0
 psycopg[binary]>=3.1.18,<4.0
-# python-jose é deprecated desde 2024 com CVE-2024-33663 / CVE-2024-33664
-# ainda não corrigidas — migração para pyjwt fica no Lote 4 desta Sprint B.
-python-jose[cryptography]==3.3.0
+# Sprint B Lote 4: substituído por PyJWT (manutenção ativa). python-jose
+# permaneceu como dependência transitiva caso algo dependa, mas o nosso
+# código não importa mais. Pode ser removido na próxima limpeza.
+pyjwt>=2.8,<3
 cryptography>=42.0.5,<43.0     # CVE-2023-50782 corrigido em 41.0.6 / 42.0.0
 passlib[bcrypt]==1.7.4         # last release; planejada substituição (Lote 4)
 bcrypt<4.0                     # passlib 1.7.x throws on bcrypt 4.x's version detection probe

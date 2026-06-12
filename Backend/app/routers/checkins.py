@@ -16,6 +16,7 @@ from ..services import (
     audit,
     can_access_patient,
     checkin_read,
+    decrypted_full_name,
     log_notification,
     notify_linked_clinicians,
     notify_linked_clinicians_report,
@@ -102,9 +103,12 @@ def create_report(
     if payload.auto_send and patient is not None:
         notify_linked_clinicians_report(db, patient, payload.summary)
         if payload.care_team_contact:
+            # Sprint B: patient.full_name é ciphertext; SMTP body já é redacted
+            # mas passamos decrypted pra manter API estável.
+            patient_display_name = decrypted_full_name(patient)
             try:
                 sent = notifications.send_clinical_report_email(
-                    payload.care_team_contact, patient.full_name, payload.summary
+                    payload.care_team_contact, patient_display_name, payload.summary
                 )
                 log_notification(
                     db, patient_id, payload.care_team_contact,

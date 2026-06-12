@@ -85,6 +85,40 @@ def test_revoke_removes_link_and_sets_revoked_status(client, admin_api_key):
     assert response.status_code == 403
 
 
+def test_clinician_sees_their_own_invites_with_statuses(client, admin_api_key):
+    _, _, pat_token, doc_token = _setup_clinician_and_patient(client, admin_api_key)
+
+    sent_before = client.get("/clinician/invites", headers=_bearer(doc_token))
+    assert sent_before.status_code == 200
+    assert sent_before.json() == []
+
+    client.post(
+        "/clinician/invites",
+        json={"patient_email": "invitee@example.com"},
+        headers=_bearer(doc_token),
+    )
+
+    sent_pending = client.get("/clinician/invites", headers=_bearer(doc_token)).json()
+    assert len(sent_pending) == 1
+    assert sent_pending[0]["status"] == "pending"
+    assert sent_pending[0]["patient_email"] == "invitee@example.com"
+
+    # Patient revokes the invite.
+    invite_id = sent_pending[0]["id"]
+    client.post(f"/me/invites/{invite_id}/revoke", headers=_bearer(pat_token))
+
+    sent_after_revoke = client.get("/clinician/invites", headers=_bearer(doc_token)).json()
+    assert len(sent_after_revoke) == 1
+    assert sent_after_revoke[0]["status"] == "revoked"
+
+
+def test_clinician_invites_listing_is_patient_only_for_patients(client):
+    register(client, email="just-a-patient@example.com")
+    token = login(client, email="just-a-patient@example.com")
+    response = client.get("/clinician/invites", headers=_bearer(token))
+    assert response.status_code == 403
+
+
 def test_revoke_404_for_other_patient_invite(client, admin_api_key):
     _, _, _, doc_token = _setup_clinician_and_patient(client, admin_api_key)
     register(client, email="bystander@example.com")
