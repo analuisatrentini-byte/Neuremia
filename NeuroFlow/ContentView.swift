@@ -617,6 +617,12 @@ struct ContentView: View {
     @State private var saveStatusMessage = ""
     @State private var scaleStatusMessage = ""
     @State private var reportStatusMessage = ""
+    // P1-2 (UX): sistema central de toasts — substitui as 9 variáveis de
+    // status espalhadas. Nível: .error (vermelho, persistente até dismiss),
+    // .warning (laranja, 4 s), .success (verde, 2 s).
+    @State private var toastMessage: String = ""
+    @State private var toastLevel: ToastLevel = .success
+    @State private var toastTask: Task<Void, Never>? = nil
     @State private var selectedPatientPage = PatientPage.diary
     // M2 (UX-P0): seções recolhíveis do diário — reduz carga cognitiva
     // para pacientes com pouca energia. Todas abertas por padrão.
@@ -1044,6 +1050,44 @@ struct ContentView: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: isPrivacyShielded)
+            // P1-2 (UX): toast central — cada variável de status dispara
+            // showToast() ao mudar, sem alterar os sites de atribuição.
+            .onChange(of: saveStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha") || msg.localizedCaseInsensitiveContains("não foi possível") || msg.localizedCaseInsensitiveContains("erro")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .onChange(of: scaleStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("não foi possível") || msg.localizedCaseInsensitiveContains("falha")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .onChange(of: reportStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha") || msg.localizedCaseInsensitiveContains("não foi possível")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .onChange(of: loginStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha") || msg.localizedCaseInsensitiveContains("não foi possível") || msg.localizedCaseInsensitiveContains("expirada") || msg.localizedCaseInsensitiveContains("erro")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .onChange(of: clinicianPatientStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha") || msg.localizedCaseInsensitiveContains("entre como")
+                showToast(msg, level: isErr ? .warning : .success)
+            }
+            .onChange(of: caregiverStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .onChange(of: linkedCliniciansStatusMessage) { _, msg in
+                guard !msg.isEmpty else { return }
+                let isErr = msg.localizedCaseInsensitiveContains("falha")
+                showToast(msg, level: isErr ? .error : .success)
+            }
+            .overlay(alignment: .bottom) { toastOverlay }
     }
 
     @ViewBuilder
@@ -1745,6 +1789,26 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // P1-3 (UX): troca de papel direto na toolbar, sem abrir Settings.
+        // Ícone badge mostra o papel ativo — clínico vê "Médico", paciente vê
+        // "Paciente". ConfirmationDialog reutiliza o mecanismo já existente.
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                roleChangePending = activeRole == .clinician ? .patient : .clinician
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: activeRole == .clinician ? "stethoscope" : "person.fill")
+                        .font(.subheadline)
+                    Text(activeRole == .clinician ? "Médico" : "Paciente")
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+            }
+            .tint(.primary)
+            .accessibilityLabel("Perfil ativo: \(activeRole == .clinician ? "Médico" : "Paciente"). Toque para alternar.")
+        }
         // Crise sempre acessível (M10) — botão vermelho próximo do polegar
         // direito em qualquer aba, abre o CrisisSupportCard na hora.
         ToolbarItem(placement: .topBarTrailing) {
@@ -2471,22 +2535,8 @@ struct ContentView: View {
                         .foregroundStyle(.primary)
                 }
 
-                // M1 (UX-P0): o botão de salvar foi movido para o safeAreaInset
-                // fixo no rodapé da aba — o botão duplicado foi removido para
-                // eliminar a ambiguidade de dois CTAs idênticos na mesma tela.
-                if !saveStatusMessage.isEmpty {
-                    // Sprint A: antes a mesma view exibia "salvo" e "falha ao
-                    // sincronizar" sempre em verde com checkmark — erro virava
-                    // sucesso visual. Detecta palavra-chave e ajusta semântica.
-                    let isError = saveStatusMessage.localizedCaseInsensitiveContains("falha")
-                        || saveStatusMessage.localizedCaseInsensitiveContains("não foi possível")
-                        || saveStatusMessage.localizedCaseInsensitiveContains("erro")
-                    Label(saveStatusMessage, systemImage: isError ? "exclamationmark.triangle.fill" : "checkmark.circle")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(isError ? .orange : .green)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityLabel((isError ? "Erro: " : "Sucesso: ") + saveStatusMessage)
-                }
+                // P1-2 (UX): status de salvar migrado para o toast central.
+                // O onChange(of: saveStatusMessage) no body faz o dispatch.
             }
             .panelStyle()
 
@@ -2622,7 +2672,10 @@ struct ContentView: View {
                 filter: $evolutionFilter
             )
 
-            PatientFeedbackCard(summary: summary, canSave: canSaveClinicalData)
+            // P1-1 (UX): PatientFeedbackCard removido daqui — já aparece na
+            // aba "Hoje". Manter nas duas abas criava duplicação confusa sem
+            // distinguir "status de hoje" de "resumo da semana". O
+            // NeuroFlowRiskSignatureCard já comunica o risco longitudinal.
             NeuroFlowRiskSignatureCard(signature: neuroFlowRiskSignature)
             PatientEvolutionCard(
                 checkIns: sortedCheckIns,
@@ -2706,13 +2759,11 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                ScaleResultCard(
-                    scale: selectedScale,
-                    score: selectedScaleScore,
-                    interpretation: selectedScaleInterpretation,
-                    hasCriticalPHQ9Answer: hasCriticalPHQ9Answer
-                )
-
+                // P1-5 (UX): ScaleResultCard movido para depois das questões.
+                // Antes o resultado ("Grave") aparecia antes de o paciente
+                // responder qualquer item — ancoragem cognitiva que pode
+                // influenciar as respostas. Agora o score atualiza em tempo
+                // real conforme o paciente responde, e fica visível no final.
                 ForEach(selectedScale.questions.indices, id: \.self) { index in
                     ScaleQuestionRow(
                         number: index + 1,
@@ -2722,6 +2773,13 @@ struct ContentView: View {
                     )
                 }
 
+                ScaleResultCard(
+                    scale: selectedScale,
+                    score: selectedScaleScore,
+                    interpretation: selectedScaleInterpretation,
+                    hasCriticalPHQ9Answer: hasCriticalPHQ9Answer
+                )
+
                 Button(action: saveScaleAssessment) {
                     Label("Salvar \(selectedScale.rawValue)", systemImage: "checkmark.circle")
                         .frame(maxWidth: .infinity)
@@ -2729,12 +2787,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!canSaveClinicalData)
 
-                if !scaleStatusMessage.isEmpty {
-                    Label(scaleStatusMessage, systemImage: scaleStatusMessage.contains("Não") ? "exclamationmark.triangle" : "checkmark.circle")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(scaleStatusMessage.contains("Não") ? .red : .green)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                // P1-2: status migrado para toast central.
             }
             .panelStyle()
 
@@ -2971,12 +3024,7 @@ struct ContentView: View {
             .buttonStyle(.bordered)
             .disabled(authToken.isEmpty)
 
-            if !clinicianPatientStatusMessage.isEmpty {
-                Text(clinicianPatientStatusMessage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // P1-2: status migrado para toast central.
 
             if clinicianPatients.isEmpty {
                 EmptyState(text: authToken.isEmpty ? "Entre na conta para buscar pacientes." : "Quando um paciente aceitar seu convite, ele aparece aqui.")
@@ -3690,12 +3738,7 @@ struct ContentView: View {
                 }
             }
 
-            if !linkedCliniciansStatusMessage.isEmpty {
-                Label(linkedCliniciansStatusMessage, systemImage: "info.circle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // P1-2: status migrado para toast central.
         }
         .panelStyle()
         // Borda lateral verde — "médico já tem acesso ativo aos meus dados".
@@ -3782,12 +3825,7 @@ struct ContentView: View {
                 }
             }
 
-            if !caregiverStatusMessage.isEmpty {
-                Label(caregiverStatusMessage, systemImage: "info.circle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // P1-2: status migrado para toast central.
         }
         .panelStyle()
         // Borda lateral azul — "cuidador/rede de apoio com permissão de
@@ -3807,14 +3845,38 @@ struct ContentView: View {
             Toggle("Lembrar medicação", isOn: $medicationReminderEnabled)
                 .toggleStyle(.switch)
 
-            Stepper("Horário da medicação: \(String(format: "%02d:00", medicationReminderHour))", value: $medicationReminderHour, in: 0...23)
-                .disabled(!medicationReminderEnabled)
+            // P1-7 (UX): Stepper substituído por DatePicker — era preciso até
+            // 23 toques para mudar o horário. Com o DatePicker basta um gesto.
+            DatePicker(
+                "Horário da medicação",
+                selection: Binding(
+                    get: {
+                        Calendar.current.date(
+                            bySettingHour: medicationReminderHour, minute: 0, second: 0, of: Date()
+                        ) ?? Date()
+                    },
+                    set: { medicationReminderHour = Calendar.current.component(.hour, from: $0) }
+                ),
+                displayedComponents: .hourAndMinute
+            )
+            .disabled(!medicationReminderEnabled)
 
             Toggle("Lembrar check-in diário", isOn: $checkInReminderEnabled)
                 .toggleStyle(.switch)
 
-            Stepper("Horário do check-in: \(String(format: "%02d:00", checkInReminderHour))", value: $checkInReminderHour, in: 0...23)
-                .disabled(!checkInReminderEnabled)
+            DatePicker(
+                "Horário do check-in",
+                selection: Binding(
+                    get: {
+                        Calendar.current.date(
+                            bySettingHour: checkInReminderHour, minute: 0, second: 0, of: Date()
+                        ) ?? Date()
+                    },
+                    set: { checkInReminderHour = Calendar.current.component(.hour, from: $0) }
+                ),
+                displayedComponents: .hourAndMinute
+            )
+            .disabled(!checkInReminderEnabled)
 
             Button {
                 Task {
@@ -3925,12 +3987,7 @@ struct ContentView: View {
                 .accessibilityHint("Abre o formulário para enviar o código recebido por e-mail e definir uma nova senha.")
             }
 
-            if !loginStatusMessage.isEmpty {
-                Label(loginStatusMessage, systemImage: isLoggedIn ? "checkmark.circle" : "exclamationmark.triangle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isLoggedIn ? .green : .orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // P1-2: loginStatusMessage migrado para toast central.
 
             Text("Conecta em http://127.0.0.1:8000/auth/login. Mantenha o backend Python rodando para entrar.")
                 .font(.caption)
@@ -4081,12 +4138,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
 
-                if !reportStatusMessage.isEmpty {
-                    Label(reportStatusMessage, systemImage: reportStatusMessage.contains("sincronizado") ? "checkmark.circle" : "exclamationmark.triangle")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(reportStatusMessage.contains("sincronizado") ? .green : .orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                // P1-2: reportStatusMessage migrado para toast central.
             }
 
             ForEach(latestReports.prefix(3)) { report in
@@ -4312,6 +4364,62 @@ struct ContentView: View {
                 scaleAnswers[scale]?[index] = newValue
             }
         )
+    }
+
+    // P1-2 (UX): ponto único de exibição de feedback ao usuário.
+    // Substitui as 9+ variáveis de status espalhadas por chamadas a esta
+    // função. Erros não fazem auto-dismiss; confirmações somem em 2 s;
+    // avisos somem em 4 s.
+    private func showToast(_ message: String, level: ToastLevel = .success) {
+        toastTask?.cancel()
+        toastMessage = message
+        toastLevel = level
+        if let delay = level.autoDismissSeconds {
+            toastTask = Task {
+                try? await Task.sleep(for: .seconds(delay))
+                if !Task.isCancelled {
+                    toastMessage = ""
+                }
+            }
+        }
+    }
+
+    /// View que renderiza o toast sobre o conteúdo principal.
+    @ViewBuilder
+    private var toastOverlay: some View {
+        if !toastMessage.isEmpty {
+            VStack {
+                Spacer()
+                HStack(spacing: 10) {
+                    Image(systemName: toastLevel.icon)
+                        .foregroundStyle(.white)
+                    Text(toastMessage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if toastLevel == .error {
+                        Button {
+                            toastMessage = ""
+                        } label: {
+                            Image(systemName: "xmark")
+                                .foregroundStyle(.white.opacity(0.8))
+                                .font(.caption.weight(.bold))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(toastLevel.color, in: RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 100) // acima da TabBar
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: toastMessage)
+            .zIndex(999)
+            .accessibilityLabel(toastMessage)
+        }
     }
 
     private func saveDailyCheckIn() {
@@ -4816,9 +4924,12 @@ struct ContentView: View {
                         .textContentType(.name)
                 }
                 Section("Contato (e-mail ou telefone)") {
+                    // P1-8 (UX): keyboardType era .emailAddress, que não exibe
+                    // teclado numérico por padrão — bloqueava entrada de telefone.
+                    // .URL mostra @, ponto e números sem ocultar letras.
                     TextField("Contato", text: $caregiverEditContact)
                         .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
+                        .keyboardType(.URL)
                 }
                 Section("Relação") {
                     TextField("Ex.: cônjuge, mãe, amigo", text: $caregiverEditRelationship)
@@ -6637,8 +6748,13 @@ private struct CrisisAntecedentVector {
 
 private enum PatientPage: String, CaseIterable, Identifiable {
     case diary = "Hoje"
-    case bodySignals = "Corpo"
+    // P1-4 (UX): "Corpo" renomeado para "Sinais" — o conteúdo real é
+    // medição fisiológica (PPG/câmera, HRV, Apple Health), não "corpo" no
+    // sentido amplo. "Sinais" comunica a funcionalidade diretamente.
+    case bodySignals = "Sinais"
     case evolution = "Evolução"
+    // P1-4 (UX): ícone "briefcase" (maleta de trabalho) trocado por
+    // "heart.text.clipboard" que comunica cuidado de saúde.
     case tools = "Ferramentas"
 
     var id: String { rawValue }
@@ -6652,7 +6768,7 @@ private enum PatientPage: String, CaseIterable, Identifiable {
         case .evolution:
             "chart.line.uptrend.xyaxis"
         case .tools:
-            "briefcase.fill"
+            "heart.text.clipboard"
         }
     }
 }
@@ -6709,6 +6825,21 @@ private enum SentInviteStatusFilter: String, CaseIterable, Identifiable {
         case .accepted: return "accepted"
         case .revoked: return "revoked"
         }
+    }
+}
+
+// P1-2 (UX): níveis de toast centralizados. .error não auto-dismiss.
+private enum ToastLevel {
+    case success, warning, error
+    var color: Color {
+        switch self { case .success: .green; case .warning: .orange; case .error: .red }
+    }
+    var icon: String {
+        switch self { case .success: "checkmark.circle.fill"; case .warning: "exclamationmark.triangle.fill"; case .error: "xmark.octagon.fill" }
+    }
+    /// nil = não faz auto-dismiss
+    var autoDismissSeconds: Double? {
+        switch self { case .success: 2; case .warning: 4; case .error: nil }
     }
 }
 
@@ -9379,11 +9510,7 @@ private struct MonthlyReportAutomationCard: View {
             }
             .buttonStyle(.bordered)
 
-            if !reportStatusMessage.isEmpty {
-                Text(reportStatusMessage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
+            // P1-2: reportStatusMessage migrado para toast central.
         }
         .panelStyle()
     }
