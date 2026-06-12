@@ -796,6 +796,21 @@ struct ContentView: View {
         return ClinicalAnalysis.summary(checkIns: sortedCheckIns, assessments: sortedAssessments)
     }
 
+    /// Lightweight fingerprint for the fields that drive LongitudinalSummary.
+    /// Changes to mood, anxiety, sleep, medication adherence, or any scale
+    /// score invalidate the PatientStore cache and trigger a recompute.
+    /// Free-text fields (journal, side-effects) are excluded because they
+    /// don't affect the computed summary and omitting them keeps this cheap.
+    private var storeFingerprint: String {
+        let checkInSignal = checkIns.reduce(into: 0) { acc, c in
+            acc += Int(c.mood * 10) + Int(c.anxiety * 10)
+                + Int(c.sleepHours * 10) + (c.medicationTaken ? 1 : 0)
+                + (c.suicidalIdeation ? 100 : 0)
+        }
+        let assessmentSignal = assessments.reduce(0) { $0 + $1.score }
+        return "\(checkIns.count)-\(assessments.count)-\(checkInSignal)-\(assessmentSignal)"
+    }
+
     private var selectedScaleAnswers: [Int] {
         scaleAnswers[selectedScale] ?? Array(repeating: 0, count: selectedScale.questions.count)
     }
@@ -1106,7 +1121,7 @@ struct ContentView: View {
             // + summary) sempre que as contagens mudam. Tira o sort+summary do
             // hot path do body — antes da auditoria as computeds rodavam ~30x
             // por render.
-            .task(id: "\(checkIns.count)-\(assessments.count)") {
+            .task(id: storeFingerprint) {
                 patientStore.recompute(checkIns: checkIns, assessments: assessments)
             }
             .onAppear {
@@ -11116,7 +11131,7 @@ private extension View {
 // fazia O(n log n) por causa do .sorted, mais o passo do ClinicalAnalysis.
 //
 // Estratégia minimalista: `isReady` começa false, fica true após o primeiro
-// recompute disparado pelo .task(id: "\(checkIns.count)-\(assessments.count)")
+// recompute disparado pelo .task(id: storeFingerprint) no body raiz.
 // no body raiz. Os 3 callsites originais (sortedCheckIns/sortedAssessments/
 // summary computeds) fazem cache-first com fallback ao recompute — não foi
 // preciso mexer nos ~30 callsites que consomem essas properties.
