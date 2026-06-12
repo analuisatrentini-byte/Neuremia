@@ -591,7 +591,8 @@ struct ContentView: View {
     @EncryptedDraft("neuroflowDraftIrritability", defaultValue: 1.0) private var irritability
     @EncryptedDraft("neuroflowDraftSleepHours", defaultValue: 7.0) private var sleepHours
     @EncryptedDraft("neuroflowDraftAppetite", defaultValue: 3.0) private var appetite
-    @EncryptedDraft("neuroflowDraftLibido", defaultValue: 3.0) private var libido
+    // P2-7: default 0.0 = "Não se aplica" para evitar ruído com valor médio.
+    @EncryptedDraft("neuroflowDraftLibido", defaultValue: 0.0) private var libido
     @State private var medicationStatus = MedicationStatus.taken
     @State private var safetyStatus = SafetyStatus.safe
     // Same DraftStore encryption applies to the free-text fields, which are
@@ -1889,16 +1890,22 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    // P3-2 (UX): "Ok" cobria humor 2/ansiedade 2 (clinicamente impreciso).
+    // Agora 4 estados mapeiam melhor o espectro de bem-estar do paciente.
     private var patientMoodStatus: String {
-        if summary.riskLevel == .high {
+        if summary.riskLevel == .high || hasCriticalSafetyRisk {
             return "Atenção"
         }
-
-        if mood >= 4 && anxiety <= 2 {
-            return "Leve"
+        if summary.riskLevel == .moderate {
+            return "Moderado"
         }
-
-        return "Ok"
+        if mood >= 4 && anxiety <= 2 && energy >= 3 {
+            return "Bem"
+        }
+        if mood >= 3 {
+            return "Estável"
+        }
+        return "Difícil"
     }
 
     // Sprint A: a view `privacyConsent` foi removida — era órfã (zero callers
@@ -1910,6 +1917,35 @@ struct ContentView: View {
     /// Sprint 23 adicionou o `streakBanner` no topo para reforço positivo.
     private var patientDashboard: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // M17/P2 (UX): banner de crise visível no TOPO quando risco é
+            // alto, antes de qualquer scroll. Antes o CrisisSupportCard só
+            // aparecia no final do diário — inacessível numa situação real.
+            if hasCriticalSafetyRisk || currentTextAssessment.level == .high {
+                Button {
+                    isShowingCrisisSheet = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "cross.case.fill")
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Apoio disponível agora")
+                                .font(.subheadline.weight(.bold))
+                            Text("Toque para ver contatos de crise e seu plano de segurança.")
+                                .font(.caption)
+                                .opacity(0.9)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(14)
+                    .background(Color.red, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Apoio em crise disponível. Toque para abrir contatos e plano de segurança.")
+            }
+
             if shouldShowMoodCoachmark {
                 moodCoachmark
             }
@@ -2462,13 +2498,20 @@ struct ContentView: View {
                                 MetricOption(label: "Voraz", value: 5, color: .red)
                             ])
 
-                            VisualMetricPicker(title: "Libido", icon: "heart", value: $libido, options: [
-                                MetricOption(label: "Muito baixa", value: 1, color: .red),
-                                MetricOption(label: "Baixa", value: 2, color: .orange),
-                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                                MetricOption(label: "Alta", value: 4, color: .orange),
-                                MetricOption(label: "Muito alta", value: 5, color: .red)
-                            ])
+                            // P2-7 (UX): "Não se aplica" evita ruído de dados
+                            // com valor default 3 para quem ignora o campo.
+                            VisualMetricPicker(
+                                title: "Libido", icon: "heart", value: $libido,
+                                options: [
+                                    MetricOption(label: "Muito baixa", value: 1, color: .red),
+                                    MetricOption(label: "Baixa", value: 2, color: .orange),
+                                    MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                    MetricOption(label: "Alta", value: 4, color: .orange),
+                                    MetricOption(label: "Muito alta", value: 5, color: .red)
+                                ],
+                                skipLabel: "Não se aplica",
+                                skipValue: 0.0
+                            )
                         }
                     }
                     .padding(.top, 8)
@@ -3399,19 +3442,22 @@ struct ContentView: View {
                     scrollableDetail(title: "Privacidade e dados") { privacyAndDataCard }
                 }
 
+                // P2-2 (UX): seção renomeada de "Compliance" para
+                // "Segurança e privacidade" com linguagem acessível para
+                // pacientes e clínicos, sem jargão técnico de infraestrutura.
                 settingsNavLink(
-                    icon: "doc.text.magnifyingglass",
-                    tint: .gray,
-                    label: "Compliance",
-                    subtitle: "Status técnico interno"
+                    icon: "lock.shield",
+                    tint: .blue,
+                    label: "Segurança e privacidade",
+                    subtitle: "Como seus dados são protegidos"
                 ) {
-                    scrollableDetail(title: "Compliance") {
+                    scrollableDetail(title: "Segurança e privacidade") {
                         VStack(alignment: .leading, spacing: 14) {
-                            ComplianceRow(icon: "person.badge.key", title: "Autenticação", description: "Login com backend FastAPI + JWT + refresh tokens + revogação per-user.")
-                            ComplianceRow(icon: "checkmark.seal", title: "Consentimento", description: "O app bloqueia salvamento sem consentimento e separa autorização de registro da autorização de compartilhamento.")
-                            ComplianceRow(icon: "externaldrive.badge.lock", title: "Proteção de dados", description: "Drafts criptografados em AES-GCM. Campos sensíveis encriptados via Fernet no backend.")
-                            ComplianceRow(icon: "eye.slash", title: "Acesso médico", description: "Dashboard médico bloqueado sem convite aceito + revogável a qualquer momento.")
-                            ComplianceRow(icon: "doc.text", title: "LGPD/HIPAA", description: "Endpoints completos de export/delete/audit-logs. Audit retido após delete via SET NULL.")
+                            ComplianceRow(icon: "person.badge.key", title: "Acesso seguro", description: "Suas credenciais nunca ficam salvas em texto puro. A sessão expira automaticamente e pode ser encerrada a qualquer momento.")
+                            ComplianceRow(icon: "checkmark.seal", title: "Você decide o que compartilha", description: "O app bloqueia o salvamento até que você aceite expressamente. Autorizar o registro é independente de autorizar o compartilhamento com seu médico.")
+                            ComplianceRow(icon: "lock.doc", title: "Dados criptografados no dispositivo", description: "Textos sensíveis (diário, pensamentos, efeitos colaterais) são criptografados antes de serem armazenados no seu aparelho.")
+                            ComplianceRow(icon: "eye.slash", title: "Acesso do seu médico é controlado", description: "Seu médico só consegue ver seus dados após você aceitar o convite. Você pode revogar esse acesso a qualquer momento em Configurações → Profissionais com acesso.")
+                            ComplianceRow(icon: "doc.text", title: "Lei Geral de Proteção de Dados (LGPD)", description: "Você pode exportar todos os seus dados ou solicitar a exclusão da conta a qualquer momento em Configurações → Privacidade e dados.")
                         }
                         .panelStyle()
                     }
@@ -3614,7 +3660,8 @@ struct ContentView: View {
 
             // Picker semântico no lugar do Stepper (Sprint 21) — paciente
             // pensa em "1 ano" ou "6 meses", não em "1290 dias".
-            Picker("Manter dados clínicos dos últimos…", selection: $privacyRetentionDays) {
+            // P2-11 (UX): label sem reticências + valor selecionado visível.
+            Picker("Retenção de dados", selection: $privacyRetentionDays) {
                 Text("90 dias").tag(90)
                 Text("6 meses").tag(180)
                 Text("1 ano").tag(365)
@@ -3910,7 +3957,7 @@ struct ContentView: View {
                     Text(isLoggedIn ? "Conta conectada" : isCreatingAccount ? "Criar conta" : "Entrar na conta")
                         .font(.headline)
 
-                    Text(isLoggedIn ? "\(authenticatedName) • \(authenticatedEmail)" : "Use o backend local para autenticar paciente ou médico.")
+                    Text(isLoggedIn ? "\(authenticatedName) • \(authenticatedEmail)" : "Entre para sincronizar seus dados com segurança.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -3941,16 +3988,29 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
-            Button {
-                Task {
-                    await handleAuthenticationButton()
+            // P3-1 (UX): botão de logout separado visualmente do de login —
+            // antes usavam o mesmo .borderedProminent e ficavam no mesmo lugar,
+            // risco de logout acidental (ação que limpa a sessão local).
+            if isLoggedIn {
+                Divider()
+                Button(role: .destructive) {
+                    Task { await handleAuthenticationButton() }
+                } label: {
+                    Label("Sair da conta", systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity)
                 }
-            } label: {
-                Label(authButtonTitle, systemImage: isLoggedIn ? "rectangle.portrait.and.arrow.right" : "arrow.right.circle")
-                    .frame(maxWidth: .infinity)
+                .buttonStyle(.bordered)
+                .tint(.red)
+            } else {
+                Button {
+                    Task { await handleAuthenticationButton() }
+                } label: {
+                    Label(authButtonTitle, systemImage: "arrow.right.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isAuthButtonDisabled)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(isAuthButtonDisabled)
 
             if !isLoggedIn {
                 HStack(spacing: 8) {
@@ -3988,11 +4048,14 @@ struct ContentView: View {
             }
 
             // P1-2: loginStatusMessage migrado para toast central.
-
-            Text("Conecta em http://127.0.0.1:8000/auth/login. Mantenha o backend Python rodando para entrar.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // P2-1 (UX): URL do backend e instrução de infraestrutura
+            // removidas da UI de produção — expor detalhes técnicos prejudica
+            // a confiança do usuário. Visível apenas em builds de Debug.
+            #if DEBUG
+            Text("Debug: conectando em http://127.0.0.1:8000")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            #endif
         }
         .panelStyle()
     }
@@ -4015,7 +4078,16 @@ struct ContentView: View {
                     historyAlertsGroup
                 }
             } else {
-                EmptyState(text: historyEmptyMessage)
+                // P2-3 (UX): empty state com ação direta para o diário
+                // quando ainda não há registros — elimina o dead-end
+                // "leva menos de 1 minuto" sem caminho para começar.
+                EmptyState(
+                    text: historyEmptyMessage,
+                    actionLabel: evolutionFilter == .all && checkIns.isEmpty ? "Fazer primeiro registro" : nil,
+                    action: evolutionFilter == .all && checkIns.isEmpty
+                        ? { selectedPatientPage = .diary }
+                        : nil
+                )
             }
         }
     }
@@ -6082,7 +6154,7 @@ struct ContentView: View {
         irritability = 1.0
         sleepHours = 7.0
         appetite = 3.0
-        libido = 3.0
+        libido = 0.0  // 0 = "Não se aplica" (P2-7)
         sideEffects = ""
         automaticThoughts = ""
         journalEntry = ""
@@ -7473,8 +7545,24 @@ private struct NeuroFlowRiskSignatureCard: View {
                 .foregroundStyle(levelColor)
             }
 
-            ProgressView(value: Double(signature.score), total: 100)
-                .tint(levelColor)
+            // P2-4 (UX): faixas de interpretação com ticks e labels abaixo
+            // da barra — sem eles "34 pontos" não é interpretável para o
+            // paciente. Leve 0-33 | Moderado 34-65 | Alto 66-100.
+            VStack(spacing: 4) {
+                ProgressView(value: Double(signature.score), total: 100)
+                    .tint(levelColor)
+
+                HStack(spacing: 0) {
+                    Text("Leve")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Moderado")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Text("Alto")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
 
             Text(signature.explanation)
                 .font(.subheadline.weight(.semibold))
@@ -9895,9 +9983,12 @@ private struct AutomaticWellbeingCheckupCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Check-up do bem-estar")
                         .font(.headline)
-                    Text("Calculado automaticamente com os dados do diário de hoje.")
+                    // P2-8 (UX): subtitle reforça natureza estimada antes de
+                    // o paciente ver as pontuações, prevenindo interpretação
+                    // incorreta como resultado clínico válido.
+                    Text("Estimativa baseada nos seus sliders — não substitui avaliação formal.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.orange.opacity(0.9))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -10320,12 +10411,21 @@ private struct SafetyStatusCard: View {
     }
 }
 
+// P2-7 (UX): adicionado parâmetro opcional `skipLabel` + `skipValue`.
+// Quando presente, exibe um botão extra "Não se aplica" que seta o valor
+// para `skipValue` (default 0). Usado em Libido para evitar que o campo
+// obrigatório com valor default 3 produza ruído de dados em pacientes
+// que simplesmente ignoram o campo.
 private struct VisualMetricPicker: View {
     let title: String
     let icon: String
     @Binding var value: Double
     let options: [MetricOption]
     var suffix = ""
+    var skipLabel: String? = nil
+    var skipValue: Double = 0.0
+
+    var isSkipped: Bool { skipLabel != nil && abs(value - skipValue) < 0.1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -10335,7 +10435,7 @@ private struct VisualMetricPicker: View {
 
                 Spacer()
 
-                Text(displayValue)
+                Text(isSkipped ? "—" : displayValue)
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -10361,6 +10461,27 @@ private struct VisualMetricPicker: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                if let label = skipLabel {
+                    Button {
+                        value = skipValue
+                    } label: {
+                        Text(label)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(isSkipped ? Color.secondary.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+                            .foregroundStyle(isSkipped ? .primary : .secondary)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(isSkipped ? Color.secondary.opacity(0.4) : Color.clear, lineWidth: 1.5)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(12)
@@ -10370,7 +10491,7 @@ private struct VisualMetricPicker: View {
     }
 
     private func isSelected(_ option: MetricOption) -> Bool {
-        abs(value - option.value) < 0.1
+        !isSkipped && abs(value - option.value) < 0.1
     }
 
     private var displayValue: String {
@@ -11495,15 +11616,29 @@ private struct ClinicianPreConsultInsightCard: View {
     }
 }
 
+// P2-3 (UX): adicionado parâmetro opcional `actionLabel`/`action` para
+// eliminar dead-ends onde o usuário sabe o que fazer mas não tem caminho
+// direto. Usos existentes sem action continuam funcionando.
 private struct EmptyState: View {
     let text: String
+    var actionLabel: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .panelStyle()
+        VStack(alignment: .leading, spacing: 10) {
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let label = actionLabel, let action {
+                Button(action: action) {
+                    Label(label, systemImage: "arrow.right.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .panelStyle()
     }
 }
 
