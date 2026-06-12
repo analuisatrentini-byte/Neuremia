@@ -666,9 +666,9 @@ struct ContentView: View {
     @AppStorage("neuroflowCustomSymptomName") private var customSymptomName = ""
     @AppStorage("neuroflowCustomSymptomValue") private var customSymptomValue = 3.0
     @AppStorage("neuroflowCustomSymptomsData") private var customSymptomsData = ""
-    @AppStorage("neuroflowSafetyContact") private var safetyContact = ""
-    @AppStorage("neuroflowSafetyWarningSigns") private var safetyWarningSigns = ""
-    @AppStorage("neuroflowSafetyStrategies") private var safetyStrategies = ""
+    @EncryptedDraft("neuroflowSafetyContact", defaultValue: "") private var safetyContact
+    @EncryptedDraft("neuroflowSafetyWarningSigns", defaultValue: "") private var safetyWarningSigns
+    @EncryptedDraft("neuroflowSafetyStrategies", defaultValue: "") private var safetyStrategies
     @AppStorage("neuroflowNextAppointmentAt") private var nextAppointmentAt = Date().addingTimeInterval(60 * 60 * 24 * 30).timeIntervalSince1970
     @AppStorage("neuroflowNextAppointmentNote") private var nextAppointmentNote = ""
     @AppStorage("neuroflowAutoMonthlyReportEnabled") private var autoMonthlyReportEnabled = false
@@ -748,13 +748,8 @@ struct ContentView: View {
         patientStore.isReady ? patientStore.sortedAssessments : assessments.sorted { $0.date > $1.date }
     }
 
-    private var activeAlerts: [ClinicalAlert] {
-        alerts.filter { !$0.acknowledged }.sorted { $0.date > $1.date }
-    }
-
-    private var latestReports: [ClinicalReport] {
-        reports.sorted { $0.date > $1.date }
-    }
+    private var activeAlerts: [ClinicalAlert] { patientStore.activeAlerts }
+    private var latestReports: [ClinicalReport] { patientStore.latestReports }
 
     // Sprint 25: query normalizada para casamento "contém" insensível a caixa.
     private var evolutionQueryNormalized: String {
@@ -808,7 +803,9 @@ struct ContentView: View {
                 + (c.suicidalIdeation ? 100 : 0)
         }
         let assessmentSignal = assessments.reduce(0) { $0 + $1.score }
-        return "\(checkIns.count)-\(assessments.count)-\(checkInSignal)-\(assessmentSignal)"
+        let alertSignal = alerts.reduce(into: 0) { acc, a in acc += a.acknowledged ? 1 : 0 }
+        let reportSignal = reports.count
+        return "\(checkIns.count)-\(assessments.count)-\(checkInSignal)-\(assessmentSignal)-\(alerts.count)-\(alertSignal)-\(reportSignal)"
     }
 
     private var selectedScaleAnswers: [Int] {
@@ -1122,7 +1119,7 @@ struct ContentView: View {
             // hot path do body — antes da auditoria as computeds rodavam ~30x
             // por render.
             .task(id: storeFingerprint) {
-                patientStore.recompute(checkIns: checkIns, assessments: assessments)
+                patientStore.recompute(checkIns: checkIns, assessments: assessments, alerts: alerts, reports: reports)
             }
             .onAppear {
                 prepareInitialData()
@@ -4004,21 +4001,36 @@ struct ContentView: View {
     private func saveDailyCheckIn() {
         saveStatusMessage = ""
 
-        let checkIn = DailyCheckIn(
-            mood: mood,
-            anxiety: anxiety,
-            energy: energy,
-            irritability: irritability,
-            sleepHours: sleepHours,
-            appetite: appetite,
-            libido: libido,
-            medicationTaken: isMedicationFullyTaken,
-            sideEffects: sideEffects,
-            automaticThoughts: automaticThoughts,
-            suicidalIdeation: hasCriticalSafetyRisk,
-            journalEntry: journalEntryWithContext
-        )
-        modelContext.insert(checkIn)
+        let todayKey = DailyCheckIn.dayKey(for: Date())
+        let checkIn: DailyCheckIn
+        if let existing = checkIns.first(where: { $0.dayKey == todayKey }) {
+            // Upsert: overwrite today's record rather than creating a duplicate.
+            checkIn = existing
+        } else {
+            checkIn = DailyCheckIn(
+                mood: mood, anxiety: anxiety, energy: energy,
+                irritability: irritability, sleepHours: sleepHours,
+                appetite: appetite, libido: libido,
+                medicationTaken: isMedicationFullyTaken,
+                sideEffects: sideEffects, automaticThoughts: automaticThoughts,
+                suicidalIdeation: hasCriticalSafetyRisk,
+                journalEntry: journalEntryWithContext
+            )
+            modelContext.insert(checkIn)
+        }
+        checkIn.date = Date()
+        checkIn.mood = mood
+        checkIn.anxiety = anxiety
+        checkIn.energy = energy
+        checkIn.irritability = irritability
+        checkIn.sleepHours = sleepHours
+        checkIn.appetite = appetite
+        checkIn.libido = libido
+        checkIn.medicationTaken = isMedicationFullyTaken
+        checkIn.sideEffects = sideEffects
+        checkIn.automaticThoughts = automaticThoughts
+        checkIn.suicidalIdeation = hasCriticalSafetyRisk
+        checkIn.journalEntry = journalEntryWithContext
         let backendPayload = BackendDailyCheckInPayload(
             mood: mood,
             anxiety: anxiety,
@@ -4649,7 +4661,7 @@ struct ContentView: View {
 
                 modelContext.insert(ClinicalAlert(
                     date: date,
-                    level: backendLevelToClinical(backendAlert.level),
+                    level: Self.backendLevelToClinical(backendAlert.level),
                     title: backendAlert.title,
                     message: backendAlert.message,
                     acknowledged: backendAlert.acknowledged
@@ -4665,10 +4677,6 @@ struct ContentView: View {
         }
     }
 
-    func backendLevelToClinical(_ level: String) -> ClinicalRiskLevel {
-        Self.backendLevelToClinical(level)
-    }
-
     /// Pull `screen.isCaptured` via the new windowScene API (UIScreen.main
     /// was deprecated in iOS 26).
     static var activeScreenIsCaptured: Bool {
@@ -4677,8 +4685,6 @@ struct ContentView: View {
             .first?.screen.isCaptured ?? false
     }
 
-    /// Free function variant exposed for unit testing. Keep in sync with
-    /// the instance method above.
     static func backendLevelToClinical(_ level: String) -> ClinicalRiskLevel {
         switch level.lowercased() {
         case "high", "critical", "urgent":
@@ -4871,7 +4877,8 @@ struct ContentView: View {
             let existingCheckIns = checkIns
             for item in checkInPayloads {
                 let date = (item["date"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
-                let alreadyExists = existingCheckIns.contains { abs($0.date.timeIntervalSince(date)) < 1 }
+                let importedDayKey = DailyCheckIn.dayKey(for: date)
+                let alreadyExists = existingCheckIns.contains { $0.dayKey == importedDayKey }
                 guard !alreadyExists else { continue }
 
                 modelContext.insert(DailyCheckIn(
@@ -11143,14 +11150,23 @@ private extension View {
 final class PatientStore {
     private(set) var sortedCheckIns: [DailyCheckIn] = []
     private(set) var sortedAssessments: [ScaleAssessment] = []
+    private(set) var activeAlerts: [ClinicalAlert] = []
+    private(set) var latestReports: [ClinicalReport] = []
     private(set) var summary: LongitudinalSummary?
     var isReady: Bool { summary != nil }
 
-    func recompute(checkIns: [DailyCheckIn], assessments: [ScaleAssessment]) {
+    func recompute(
+        checkIns: [DailyCheckIn],
+        assessments: [ScaleAssessment],
+        alerts: [ClinicalAlert],
+        reports: [ClinicalReport]
+    ) {
         let sortedC = checkIns.sorted { $0.date > $1.date }
         let sortedA = assessments.sorted { $0.date > $1.date }
         sortedCheckIns = sortedC
         sortedAssessments = sortedA
+        activeAlerts = alerts.filter { !$0.acknowledged }.sorted { $0.date > $1.date }
+        latestReports = reports.sorted { $0.date > $1.date }
         summary = ClinicalAnalysis.summary(checkIns: sortedC, assessments: sortedA)
     }
 }

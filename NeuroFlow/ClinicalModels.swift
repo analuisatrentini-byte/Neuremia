@@ -29,6 +29,10 @@ final class PatientProfile {
 
 @Model
 final class DailyCheckIn {
+    /// Calendar-day key ("YYYY-MM-DD" in the device's current calendar).
+    /// Declared unique so SwiftData enforces one check-in per day at the
+    /// store level, mirroring the one-per-day business rule enforced in code.
+    @Attribute(.unique) var dayKey: String
     var date: Date
     var mood: Double
     var anxiety: Double
@@ -45,6 +49,7 @@ final class DailyCheckIn {
 
     init(date: Date = Date(), mood: Double, anxiety: Double, energy: Double, irritability: Double, sleepHours: Double, appetite: Double, libido: Double, medicationTaken: Bool, sideEffects: String, automaticThoughts: String, suicidalIdeation: Bool, journalEntry: String) {
         self.date = date
+        self.dayKey = DailyCheckIn.dayKey(for: date)
         self.mood = mood
         self.anxiety = anxiety
         self.energy = energy
@@ -57,6 +62,11 @@ final class DailyCheckIn {
         self.automaticThoughts = automaticThoughts
         self.suicidalIdeation = suicidalIdeation
         self.journalEntry = journalEntry
+    }
+
+    static func dayKey(for date: Date, calendar: Calendar = .current) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 }
 

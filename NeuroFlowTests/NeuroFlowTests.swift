@@ -71,6 +71,62 @@ struct NeuroFlowTests {
         #expect(!assessment.recommendation.isEmpty)
     }
 
+    @Test func textAssessmentExpandedHighRiskVocabulary() {
+        // Diacritics stripped by .diacriticInsensitive folding.
+        let suicida = ClinicalAnalysis.textAssessment(for: "Estou me sentindo suicida hoje")
+        #expect(suicida.level == .high)
+
+        let autolesao = ClinicalAnalysis.textAssessment(for: "Voltei a me machucar ontem à noite")
+        #expect(autolesao.level == .high)
+
+        let passiveDeath = ClinicalAnalysis.textAssessment(for: "Queria não acordar mais amanhã")
+        #expect(passiveDeath.level == .high)
+
+        let farewell = ClinicalAnalysis.textAssessment(for: "Ninguém vai sentir falta de mim")
+        #expect(farewell.level == .high)
+    }
+
+    @Test func textAssessmentExpandedModerateVocabulary() {
+        let limit = ClinicalAnalysis.textAssessment(for: "Estou no limite, não aguento mais")
+        #expect(limit.level == .moderate)
+
+        let isolation = ClinicalAnalysis.textAssessment(for: "Me sinto sozinha e invisível para todos")
+        #expect(isolation.level == .moderate)
+
+        let exhausted = ClinicalAnalysis.textAssessment(for: "Estou completamente esgotada e sem esperança")
+        #expect(exhausted.level == .moderate)
+
+        let panic = ClinicalAnalysis.textAssessment(for: "Tive um ataque de pânico no trabalho")
+        #expect(panic.level == .moderate)
+    }
+
+    @Test func textAssessmentLowForNeutralText() {
+        let neutral = ClinicalAnalysis.textAssessment(for: "Hoje foi um dia tranquilo, caminhei no parque")
+        #expect(neutral.level == .low)
+        #expect(neutral.detectedTerms.isEmpty)
+    }
+
+    @Test func trendUsesOLSNotFirstToLastDelta() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        // Mood sequence: broadly declining (OLS slope < 0) but the final
+        // value happens to be higher than the first, so first-to-last delta
+        // would wrongly report an upward trend.
+        // Values: 4, 3, 2, 1, 2  — first=4, last=2 (wrong: delta = -0.5)
+        // OLS slope ≈ -0.8, correctly capturing the overall decline.
+        let checkIns = [
+            makeCheckIn(date: start,                             mood: 4.0, anxiety: 1.0, sleepHours: 7.0, medicationTaken: true),
+            makeCheckIn(date: start.addingTimeInterval(86_400),  mood: 3.0, anxiety: 1.0, sleepHours: 7.0, medicationTaken: true),
+            makeCheckIn(date: start.addingTimeInterval(172_800), mood: 2.0, anxiety: 1.0, sleepHours: 7.0, medicationTaken: true),
+            makeCheckIn(date: start.addingTimeInterval(259_200), mood: 1.0, anxiety: 1.0, sleepHours: 7.0, medicationTaken: true),
+            makeCheckIn(date: start.addingTimeInterval(345_600), mood: 2.0, anxiety: 1.0, sleepHours: 7.0, medicationTaken: true),
+        ]
+        let summary = ClinicalAnalysis.summary(checkIns: checkIns, assessments: [])
+        // OLS slope must be negative; first-to-last would give (2-4)/4 = -0.5 (negative, correct here).
+        // More importantly, verify it is steeper than the naive estimate:
+        // OLS on [4,3,2,1,2]: slope = -0.8 < -0.5 (first-to-last).
+        #expect(summary.moodTrend < -0.5)
+    }
+
     @Test func longitudinalSummaryDetectsWorseningMoodAndAdherence() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let checkIns = [

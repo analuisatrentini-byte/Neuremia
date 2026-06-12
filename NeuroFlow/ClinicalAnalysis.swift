@@ -65,8 +65,37 @@ enum ClinicalAnalysis {
 
     static func textAssessment(for text: String) -> TextRiskAssessment {
         let normalized = text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
-        let highRiskTerms = ["suicidio", "morrer", "me matar", "autolesao", "sem saida", "despedida"]
-        let moderateRiskTerms = ["desesperanca", "panico", "crise", "insonia", "impulsivo", "sem controle"]
+        let highRiskTerms = [
+            // Suicidal ideation — direct
+            "suicidio", "suicida", "me matar", "quero morrer", "vou me matar",
+            "tirar minha vida", "acabar com tudo", "nao quero mais viver",
+            "nao vale a pena viver", "melhor estar morto",
+            // Self-harm
+            "autolesao", "me machucar", "me cortar", "cortar os pulsos",
+            "me ferir", "me machuquei",
+            // Hopelessness / farewell
+            "sem saida", "nao tem saida", "nao ha saida",
+            "despedida", "ultima vez", "ninguem vai sentir falta",
+            // Death wish (passive)
+            "morrer", "desaparecer para sempre", "nao acordar mais"
+        ]
+        let moderateRiskTerms = [
+            // Emotional distress
+            "desesperanca", "desesperado", "desesperada", "sem esperanca",
+            "nao aguento mais", "nao consigo mais", "estou no limite",
+            "esgotado", "esgotada", "exausto", "exausta",
+            // Anxiety / crisis
+            "panico", "ataque de panico", "crise", "crise de ansiedade",
+            "colapso", "entrei em colapso",
+            // Sleep / physical
+            "insonia", "nao consigo dormir", "noites sem dormir",
+            // Impulse / control loss
+            "impulsivo", "impulsiva", "sem controle", "perdi o controle",
+            "fiz algo que nao devia",
+            // Isolation / abandonment
+            "me sinto sozinho", "me sinto sozinha", "ninguem me entende",
+            "abandonado", "abandonada", "invisivel"
+        ]
         let detectedHighRiskTerms = highRiskTerms.filter { normalized.contains($0) }
         let detectedModerateRiskTerms = moderateRiskTerms.filter { normalized.contains($0) }
 
@@ -241,12 +270,25 @@ enum ClinicalAnalysis {
         return .low
     }
 
+    // Returns the ordinary least-squares slope (change per step) of `values`.
+    // More robust than first-to-last delta: a single outlier at either end
+    // no longer dominates the trend shown to clinicians.
     private static func trend(values: [Double]) -> Double {
-        guard values.count >= 2, let first = values.first, let last = values.last else {
-            return 0
+        let n = Double(values.count)
+        guard n >= 2 else { return 0 }
+
+        let meanX = (n - 1) / 2          // mean of 0, 1, …, n-1
+        let meanY = values.reduce(0, +) / n
+
+        var numerator = 0.0
+        var denominator = 0.0
+        for (i, y) in values.enumerated() {
+            let dx = Double(i) - meanX
+            numerator   += dx * (y - meanY)
+            denominator += dx * dx
         }
 
-        return (last - first) / Double(values.count - 1)
+        return denominator == 0 ? 0 : numerator / denominator
     }
 
     private static func average(_ values: [Double]) -> Double {
