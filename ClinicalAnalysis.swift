@@ -9,7 +9,16 @@ import Foundation
 
 enum ClinicalAnalysis {
     static func score(for scale: ScaleKind, answers: [Int]) -> Int {
-        answers.reduce(0, +)
+        // Clamp every answer to its declared range before summing so that
+        // out-of-bounds data never inflates the score.
+        // YMRS: items at indices 4,5,7,8 are 0–8; all others 0–4 → max 60.
+        // PHQ-9: all items 0–3 → max 27.
+        // GAD-7: all items 0–3 → max 21.
+        answers.enumerated().reduce(0) { total, pair in
+            let (index, value) = pair
+            let range = scale.answerRange(for: index)
+            return total + min(max(value, range.lowerBound), range.upperBound)
+        }
     }
 
     static func interpretation(for scale: ScaleKind, score: Int) -> String {
