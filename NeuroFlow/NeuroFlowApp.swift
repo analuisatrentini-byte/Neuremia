@@ -12,7 +12,11 @@ import SwiftData
 struct NeuroFlowApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            PatientProfile.self,
+            DailyCheckIn.self,
+            ScaleAssessment.self,
+            ClinicalAlert.self,
+            ClinicalReport.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

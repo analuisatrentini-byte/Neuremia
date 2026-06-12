@@ -1,0 +1,123 @@
+"""/clinician/* — endpoints accessible only to users with role=clinician."""
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from .. import models, schemas
+from ..database import get_db
+from ..dependencies import current_user, require_role
+from ..services import (
+    audit,
+    invite_read,
+    patient_risk_summary_batch,
+    sent_invite_read,
+    user_read,
+)
+
+
+router = APIRouter(prefix="/clinician", tags=["clinician"])
+
+
+@router.post("/invites", response_model=schemas.ClinicianInviteRead)
+def create_clinician_invite(
+    payload: schemas.ClinicianInviteCreate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    """Clinician requests access; link only created when patient accepts."""
+    require_role(user, models.UserRole.clinician.value)
+    patient = db.query(models.User).filter(
+        models.User.email == payload.patient_email.lower(),
+        models.User.role == models.UserRole.patient.value,
+    ).first()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    existing_link = db.query(models.ClinicianPatientLink).filter(
+        models.ClinicianPatientLink.clinician_id == user.id,
+        models.ClinicianPatientLink.patient_id == patient.id,
+    ).first()
+    if existing_link is not None:
+        raise HTTPException(status_code=409, detail="Patient already linked")
+
+    pending = db.query(models.ClinicianPatientInvite).filter(
+        models.ClinicianPatientInvite.clinician_id == user.id,
+        models.ClinicianPatientInvite.patient_id == patient.id,
+        models.ClinicianPatientInvite.status == models.InviteStatus.pending.value,
+    ).first()
+    if pending is not None:
+        invite = pending
+    else:
+        invite = models.ClinicianPatientInvite(clinician_id=user.id, patient_id=patient.id)
+        db.add(invite)
+        audit(db, user, "invite_patient", "user", str(patient.id))
+        db.commit()
+        db.refresh(invite)
+
+    return schemas.ClinicianInviteRead(
+        id=invite.id,
+        clinician_id=invite.clinician_id,
+        patient_id=invite.patient_id,
+        clinician_full_name=user.full_name,
+        clinician_email=user.email,
+        status=invite.status,
+        created_at=invite.created_at,
+    )
+
+
+@router.get("/invites", response_model=list[schemas.ClinicianSentInviteRead])
+def list_clinician_invites(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
+    require_role(user, models.UserRole.clinician.value)
+    invites = (
+        db.query(models.ClinicianPatientInvite)
+        .filter(models.ClinicianPatientInvite.clinician_id == user.id)
+        .order_by(models.ClinicianPatientInvite.created_at.desc())
+        .all()
+    )
+    return [sent_invite_read(db, invite) for invite in invites]
+
+
+@router.post("/patients", response_model=schemas.UserRead, deprecated=True)
+def link_patient_deprecated(
+    payload: schemas.LinkPatientRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    """Deprecated; routes through /clinician/invites."""
+    require_role(user, models.UserRole.clinician.value)
+    invite_response = create_clinician_invite(
+        schemas.ClinicianInviteCreate(patient_email=payload.patient_email),
+        db=db,
+        user=user,
+    )
+    patient = db.query(models.User).filter(models.User.id == invite_response.patient_id).first()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return user_read(db, patient, include_risk=False)
+
+
+@router.get("/patients", response_model=list[schemas.UserRead])
+def clinician_patients(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
+    require_role(user, models.UserRole.clinician.value)
+    links = db.query(models.ClinicianPatientLink).filter(
+        models.ClinicianPatientLink.clinician_id == user.id
+    ).all()
+    patient_ids = [link.patient_id for link in links]
+    if not patient_ids:
+        return []
+    patients = db.query(models.User).filter(models.User.id.in_(patient_ids)).all()
+    risk_by_patient = patient_risk_summary_batch(db, patient_ids)
+    ranked_patients = []
+    for patient in patients:
+        score, level = risk_by_patient.get(patient.id, (None, None))
+        ranked_patients.append(
+            schemas.UserRead(
+                id=patient.id,
+                email=patient.email,
+                full_name=patient.full_name,
+                role=patient.role,
+                created_at=patient.created_at,
+                risk_score=score,
+                risk_level=level,
+            )
+        )
+    return sorted(ranked_patients, key=lambda patient: patient.risk_score or -1, reverse=True)

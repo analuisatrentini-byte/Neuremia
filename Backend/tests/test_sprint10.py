@@ -1,0 +1,153 @@
+"""Regression suite for Sprint 10 surgical fixes.
+
+Covers:
+- B41: migration 0003 nullable already verified by other tests.
+- D18: admin purge of refresh tokens.
+- FN22: re-issuing an invite after the patient revoked it.
+- FN19: patient revoking access from an already-linked clinician.
+"""
+from datetime import datetime, timedelta
+
+from .conftest import login, promote_to_clinician, register
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+# ---------------- D18 ----------------
+
+def test_admin_purge_removes_expired_refresh_tokens(client, admin_api_key):
+    from app import database, models
+
+    user = register(client, email="purge@example.com")
+    refresh = user["refresh_token"]
+
+    # Backdate one refresh token so it qualifies as expired.
+    with database.SessionLocal() as session:
+        record = session.query(models.RefreshToken).first()
+        record.expires_at = datetime.utcnow() - timedelta(days=1)
+        session.commit()
+
+    response = client.post(
+        "/admin/refresh-tokens/purge",
+        headers={"X-Admin-API-Key": admin_api_key},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted_refresh_tokens"] >= 1
+
+    # The expired token can no longer be exchanged.
+    rotation = client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert rotation.status_code == 401
+
+
+def test_admin_purge_requires_admin_key(client):
+    response = client.post("/admin/refresh-tokens/purge", headers={"X-Admin-API-Key": "wrong"})
+    assert response.status_code == 401
+
+
+# ---------------- FN22 ----------------
+
+def test_invite_reissue_after_revocation(client, admin_api_key):
+    patient = register(client, email="reissue-pat@example.com")
+    clinician = register(client, email="reissue-doc@example.com")
+    promote_to_clinician(client, user_id=clinician["user"]["id"], admin_key=admin_api_key)
+
+    pat_token = login(client, email="reissue-pat@example.com")
+    doc_token = login(client, email="reissue-doc@example.com")
+
+    first = client.post(
+        "/clinician/invites",
+        json={"patient_email": "reissue-pat@example.com"},
+        headers=_bearer(doc_token),
+    )
+    invite_id = first.json()["id"]
+
+    # Patient accepts then revokes.
+    client.post(f"/me/invites/{invite_id}/accept", headers=_bearer(pat_token))
+    client.post(f"/me/invites/{invite_id}/revoke", headers=_bearer(pat_token))
+
+    # Clinician resends the invite. Should create a fresh pending row, not
+    # return the historical revoked one.
+    second = client.post(
+        "/clinician/invites",
+        json={"patient_email": "reissue-pat@example.com"},
+        headers=_bearer(doc_token),
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["status"] == "pending"
+    assert body["id"] != invite_id
+
+
+# ---------------- FN19 ----------------
+
+def _setup_linked_pair(client, admin_api_key):
+    patient = register(client, email="linked-pat@example.com")
+    clinician = register(client, email="linked-doc@example.com")
+    promote_to_clinician(client, user_id=clinician["user"]["id"], admin_key=admin_api_key)
+    pat_token = login(client, email="linked-pat@example.com")
+    doc_token = login(client, email="linked-doc@example.com")
+
+    invite = client.post(
+        "/clinician/invites",
+        json={"patient_email": "linked-pat@example.com"},
+        headers=_bearer(doc_token),
+    )
+    invite_id = invite.json()["id"]
+    client.post(f"/me/invites/{invite_id}/accept", headers=_bearer(pat_token))
+    return patient, clinician, pat_token, doc_token
+
+
+def test_list_linked_clinicians_shows_accepted_only(client, admin_api_key):
+    _, clinician, pat_token, _ = _setup_linked_pair(client, admin_api_key)
+    response = client.get("/me/linked-clinicians", headers=_bearer(pat_token))
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["clinician_id"] == clinician["user"]["id"]
+    assert body[0]["clinician_full_name"] == "User"  # default in conftest
+
+
+def test_revoke_clinical_access_removes_link_and_blocks_doc(client, admin_api_key):
+    patient, clinician, pat_token, doc_token = _setup_linked_pair(client, admin_api_key)
+
+    response = client.delete(
+        f"/me/clinical-access/{clinician['user']['id']}",
+        headers=_bearer(pat_token),
+    )
+    assert response.status_code == 200
+
+    # Clinician loses access immediately.
+    forbidden = client.get(
+        f"/patients/{patient['user']['id']}/checkins",
+        headers=_bearer(doc_token),
+    )
+    assert forbidden.status_code == 403
+
+    # Patient's list of linked clinicians is empty.
+    listing = client.get("/me/linked-clinicians", headers=_bearer(pat_token))
+    assert listing.json() == []
+
+    # The clinician's view of sent invites surfaces revoked status (Sprint 9).
+    sent = client.get("/clinician/invites", headers=_bearer(doc_token)).json()
+    assert any(item["status"] == "revoked" for item in sent)
+
+
+def test_revoke_clinical_access_404_if_not_linked(client, admin_api_key):
+    register(client, email="solo@example.com")
+    register(client, email="ghost-doc@example.com")
+    promote_to_clinician(client, user_id=2, admin_key=admin_api_key)
+    solo_token = login(client, email="solo@example.com")
+
+    response = client.delete("/me/clinical-access/2", headers=_bearer(solo_token))
+    assert response.status_code == 404
+
+
+def test_linked_clinicians_endpoint_403_for_clinicians(client, admin_api_key):
+    register(client, email="doc-only@example.com")
+    promote_to_clinician(client, user_id=1, admin_key=admin_api_key)
+    token = login(client, email="doc-only@example.com")
+
+    response = client.get("/me/linked-clinicians", headers=_bearer(token))
+    assert response.status_code == 403
