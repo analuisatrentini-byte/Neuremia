@@ -645,6 +645,7 @@ struct ContentView: View {
     @State private var isRequestingPasswordReset = false
     @State private var patientLinkEmail = ""
     @State private var clinicianPatients: [BackendUser] = []
+    @State private var clinicianPatientsLastLoaded: Date?
     @State private var selectedRemotePatient: BackendUser?
     @State private var clinicianPatientFilter: ClinicianPatientFilter = .all
     @State private var sentInvitesFilter: SentInviteStatusFilter = .all
@@ -1504,11 +1505,24 @@ struct ContentView: View {
                     }
                 }
             }
+            .refreshable {
+                await loadClinicianPatients()
+                await loadClinicianSentInvites()
+            }
             .background(appBackground)
             .navigationTitle("Pacientes")
             .navigationBarTitleDisplayMode(.large)
             .privacySensitive(true)
-            .toolbar { toolbarContent }
+            .toolbar {
+                toolbarContent
+                if let ts = clinicianPatientsLastLoaded {
+                    ToolbarItem(placement: .bottomBar) {
+                        Text("Atualizado \(ts.formatted(.relative(presentation: .named)))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
             // Push navigation para o detalhe do paciente (M5)
             .navigationDestination(for: BackendUser.self) { patient in
                 clinicianPatientDetailPage(for: patient)
@@ -1830,11 +1844,21 @@ struct ContentView: View {
                 isShowingSettings = true
             } label: {
                 Image(systemName: "gearshape.fill")
+                    .overlay(alignment: .topTrailing) {
+                        if offlineSyncQueue.count > 0 {
+                            Circle()
+                                .fill(Color.orange)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 3, y: -3)
+                        }
+                    }
             }
             // Cor neutra (Sprint 21) — settings é navegação secundária, não
             // ação primária. SOS continua vermelho para destacar urgência.
             .tint(.primary)
-            .accessibilityLabel("Configurações")
+            .accessibilityLabel(offlineSyncQueue.count > 0
+                ? "Configurações — \(offlineSyncQueue.count) item(ns) pendente(s) de sincronização"
+                : "Configurações")
         }
     }
 
@@ -6345,6 +6369,7 @@ struct ContentView: View {
 
         do {
             clinicianPatients = try await BackendAuthClient.clinicianPatients(token: authToken)
+            clinicianPatientsLastLoaded = Date()
             clinicianPatientStatusMessage = clinicianPatients.isEmpty ? "Nenhum paciente vinculado." : "\(clinicianPatients.count) paciente(s) carregado(s)."
         } catch {
             clinicianPatientStatusMessage = "Falha ao carregar pacientes: \(error.localizedDescription)"
