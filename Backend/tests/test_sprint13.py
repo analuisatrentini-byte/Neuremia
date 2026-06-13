@@ -6,7 +6,7 @@ Covers:
 - S6: CORSMiddleware blocks disallowed origins (verified via Origin header).
 - S9: password-reset confirm flow (success, wrong code, expired token, no email).
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .conftest import grant_consent, login, promote_to_clinician, register
 
@@ -225,7 +225,7 @@ def test_password_reset_confirm_rejects_expired_token(client, monkeypatch):
 
     with database.SessionLocal() as session:
         record = session.query(models.PasswordResetToken).first()
-        record.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        record.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
         session.commit()
 
     response = client.post(

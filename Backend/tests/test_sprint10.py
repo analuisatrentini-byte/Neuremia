@@ -6,7 +6,7 @@ Covers:
 - FN22: re-issuing an invite after the patient revoked it.
 - FN19: patient revoking access from an already-linked clinician.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .conftest import login, promote_to_clinician, register
 
@@ -26,7 +26,7 @@ def test_admin_purge_removes_expired_refresh_tokens(client, admin_api_key):
     # Backdate one refresh token so it qualifies as expired.
     with database.SessionLocal() as session:
         record = session.query(models.RefreshToken).first()
-        record.expires_at = datetime.utcnow() - timedelta(days=1)
+        record.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
         session.commit()
 
     response = client.post(
@@ -55,7 +55,7 @@ def test_admin_purge_drops_old_revoked_tokens(client, admin_api_key):
 
     with database.SessionLocal() as session:
         token = session.query(models.RefreshToken).first()
-        token.revoked_at = datetime.utcnow() - timedelta(days=2)
+        token.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
         session.commit()
 
     response = client.post(
@@ -75,7 +75,7 @@ def test_admin_purge_skips_fresh_revoked_tokens(client, admin_api_key):
 
     with database.SessionLocal() as session:
         token = session.query(models.RefreshToken).first()
-        token.revoked_at = datetime.utcnow() - timedelta(minutes=10)
+        token.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
         session.commit()
 
     response = client.post(

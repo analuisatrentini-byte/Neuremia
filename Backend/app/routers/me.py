@@ -177,12 +177,12 @@ def export_my_account(
     from_date: Optional[datetime] = Query(
         default=None,
         description="ISO-8601 UTC start date (inclusive). Omit for all records.",
-        example="2025-01-01T00:00:00",
+        examples=["2025-01-01T00:00:00"],
     ),
     to_date: Optional[datetime] = Query(
         default=None,
         description="ISO-8601 UTC end date (inclusive). Omit for all records.",
-        example="2025-12-31T23:59:59",
+        examples=["2025-12-31T23:59:59"],
     ),
 ):
     """Export the caller's data.

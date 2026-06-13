@@ -1,5 +1,5 @@
 """Sprint 14 — access token revocation."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .conftest import login, register
 
@@ -71,7 +71,7 @@ def test_admin_purge_removes_expired_jti_blacklist_rows(client, admin_api_key):
     with database.SessionLocal() as session:
         record = session.query(models.RevokedAccessToken).first()
         assert record is not None
-        record.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        record.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
         session.commit()
 
     response = client.post(

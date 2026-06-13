@@ -416,7 +416,7 @@ def patient_risk_summary_live(db: Session, patient_id: int) -> tuple[int, str]:
         db.query(models.ClinicalAlert)
         .filter(
             models.ClinicalAlert.patient_id == patient_id,
-            models.ClinicalAlert.acknowledged == False,  # noqa: E712
+            models.ClinicalAlert.acknowledged.is_(False),
             models.ClinicalAlert.deleted_at.is_(None),  # B6
         )
         .all()
@@ -478,7 +478,7 @@ def _patient_risk_summary_batch_live(
         db.query(models.ClinicalAlert)
         .filter(
             models.ClinicalAlert.patient_id.in_(patient_ids),
-            models.ClinicalAlert.acknowledged == False,  # noqa: E712
+            models.ClinicalAlert.acknowledged.is_(False),
             models.ClinicalAlert.deleted_at.is_(None),  # B6
         )
         .all()
@@ -524,7 +524,7 @@ def notify_enabled_caregivers(
 ) -> None:
     caregivers = db.query(models.CaregiverContact).filter(
         models.CaregiverContact.patient_id == patient.id,
-        models.CaregiverContact.share_enabled == True,  # noqa: E712
+        models.CaregiverContact.share_enabled.is_(True),
     ).all()
     patient_name = decrypted_full_name(patient)
     for caregiver in caregivers:

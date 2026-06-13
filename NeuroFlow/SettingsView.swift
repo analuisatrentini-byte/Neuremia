@@ -1456,9 +1456,8 @@ extension ContentView {
             // ("quero morrer", "sem saida") even when the toggle is not set.
             // Without this, a patient writing high-risk text but not touching
             // the safety control would produce item 9 = 0 — clinical underdetection.
-            let explicitItem9 = (scaleAnswers[.phq9] ?? []).indices.contains(8)
-                ? (scaleAnswers[.phq9]![8])
-                : 0
+            let phq9Answers = scaleAnswers[.phq9] ?? []
+            let explicitItem9 = phq9Answers.indices.contains(8) ? phq9Answers[8] : 0
             let item9 = max(safetySeverity, textSeverity, explicitItem9)
             return [
                 lowMoodSeverity,

@@ -10,7 +10,7 @@ M7  libido field accepts float (already Double in Swift / Float in DB)
 M8  encrypt/decrypt round-trip + backup round-trip
 M9  RiskCache updated after check-in; /clinician/patients reads from cache
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -414,7 +414,7 @@ def test_expired_invite_hidden_from_patient(client, admin_api_key, monkeypatch):
     with Session() as s:
         from app import models
         invite = s.query(models.ClinicianPatientInvite).filter_by(id=invite_id).first()
-        invite.expires_at = datetime.utcnow() - timedelta(days=1)
+        invite.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
         s.commit()
 
     patient_token = login(client, email="patient_exp@test.com")
