@@ -149,7 +149,11 @@ extension ContentView {
             Button {
                 let patient = ensurePatient()
                 patient.consentAccepted = true
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    saveStatusMessage = "Não foi possível salvar o consentimento: \(error.localizedDescription)"
+                }
                 hasCompletedOnboarding = true
                 onboardingStep = 0
             } label: {
@@ -168,7 +172,11 @@ extension ContentView {
             Button {
                 let patient = ensurePatient()
                 patient.consentAccepted = true
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    saveStatusMessage = "Não foi possível salvar o consentimento: \(error.localizedDescription)"
+                }
                 hasCompletedOnboarding = true
                 onboardingStep = 0
                 // Abre a sheet de login após o onboarding fechar.

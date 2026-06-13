@@ -98,17 +98,26 @@ enum ClinicalAnalysis {
     }
 
     // N-M1: returns true if `term` appears in `text` at a position that is NOT
-    // immediately preceded by a common negation word (não, nunca, jamais, sem).
-    // Looks back up to 3 tokens before the term to handle "eu não vou me matar".
+    // immediately preceded by a negation word. Handles two negation patterns:
+    //   1. Verb negators (não, nunca, jamais, impossível) — look back up to 3 tokens
+    //      to handle "eu não vou me matar".
+    //   2. Absence markers (sem) — "sem esperança" means the positive term "esperança"
+    //      is ABSENT, so "sem" must be treated as a negator only when it PRECEDES the
+    //      term immediately (within 2 tokens), preventing false alerts on phrases like
+    //      "estou sem saída" where "sem saída" is itself a high-risk term.
     private static func termPresent(_ term: String, in text: String) -> Bool {
         guard text.contains(term) else { return false }
-        let negations = ["nao", "nunca", "jamais", "sem", "impossivel"]
+        let verbNegators = ["nao", "nunca", "jamais", "impossivel"]
+        let absenceMarkers = ["sem"]
         var searchRange = text.startIndex..<text.endIndex
         while let range = text.range(of: term, range: searchRange) {
             let before = String(text[text.startIndex..<range.lowerBound])
             let tokens = before.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
             let lastThree = tokens.suffix(3)
-            if !lastThree.contains(where: { negations.contains($0) }) {
+            let lastTwo = tokens.suffix(2)
+            let negated = lastThree.contains(where: { verbNegators.contains($0) })
+                || lastTwo.contains(where: { absenceMarkers.contains($0) })
+            if !negated {
                 return true
             }
             searchRange = range.upperBound..<text.endIndex
@@ -360,11 +369,12 @@ enum ClinicalAnalysis {
         return values.reduce(0, +) / Double(values.count)
     }
 
+    // Adherence is computed only over check-ins where the patient explicitly
+    // recorded whether they took medication. Missing entries (days without a
+    // check-in) are treated as "unknown", not as "medication not taken", to
+    // avoid artificially deflating adherence when a patient skips logging.
     private static func adherence(in checkIns: [DailyCheckIn]) -> Double {
-        guard !checkIns.isEmpty else {
-            return 1
-        }
-
+        guard !checkIns.isEmpty else { return 1 }
         let taken = checkIns.filter(\.medicationTaken).count
         return Double(taken) / Double(checkIns.count)
     }

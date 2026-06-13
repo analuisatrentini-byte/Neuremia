@@ -57,10 +57,10 @@ def totp_enable(
 ):
     """Verify that the authenticator app is configured correctly, then enable 2FA."""
     if not user.totp_secret_enc:
-        raise HTTPException(status_code=400, detail="Call /auth/2fa/setup first")
+        raise HTTPException(status_code=400, detail="Configure o 2FA em /auth/2fa/setup primeiro")
     secret = decrypt_field(user.totp_secret_enc)
     if not verify_totp_code(secret, payload.code):
-        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+        raise HTTPException(status_code=400, detail="Código TOTP inválido")
     user.totp_enabled = True
     audit(db, user, "2fa_enabled", "user", str(user.id))
     db.commit()
@@ -78,7 +78,7 @@ def totp_disable(
         raise HTTPException(status_code=400, detail="2FA nao esta ativo")
     secret = decrypt_field(user.totp_secret_enc)
     if not verify_totp_code(secret, payload.code):
-        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+        raise HTTPException(status_code=400, detail="Código TOTP inválido")
     user.totp_enabled = False
     user.totp_secret_enc = None
     audit(db, user, "2fa_disabled", "user", str(user.id))

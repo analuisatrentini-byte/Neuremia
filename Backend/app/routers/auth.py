@@ -88,7 +88,7 @@ def login(
     if user is not None and user.locked_until is not None and user.locked_until > utcnow():
         # Mensagem deliberadamente genérica — não revela que a conta existe.
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas"
         )
 
     if user is None or not verify_password(payload.password, user.password_hash):
@@ -101,7 +101,7 @@ def login(
                 user.locked_until = utcnow() + timedelta(seconds=backoff)
                 audit(db, user, "login_lockout", "user", str(user.id))
             db.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
 
     # Sucesso: zera contadores.
     if user.failed_login_count or user.locked_until is not None:
@@ -142,11 +142,11 @@ def refresh_session(
     digest = hash_refresh_token(payload.refresh_token)
     record = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == digest).first()
     if record is None or record.revoked_at is not None or record.expires_at < utcnow():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de atualização inválido")
 
     user = db.query(models.User).filter(models.User.id == record.user_id).first()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado")
 
     record.revoked_at = utcnow()
     access, refresh = issue_token_pair(db, user)

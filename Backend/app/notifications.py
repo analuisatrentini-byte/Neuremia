@@ -16,6 +16,13 @@ from urllib.parse import urlparse
 _SMTP_MAX_ATTEMPTS = 3
 _SMTP_RETRY_BACKOFF_BASE = 1.0  # seconds; doubles on each retry
 
+_PUSH_MAX_ATTEMPTS = 3
+_PUSH_RETRY_BACKOFF_BASE = 2.0  # seconds; doubles each retry: 2s, 4s, 8s
+# Circuit breaker: after this many consecutive failures, skip calls for
+# _PUSH_CIRCUIT_RESET_SECONDS to avoid stacking timeouts under load.
+_PUSH_CIRCUIT_THRESHOLD = 5
+_PUSH_CIRCUIT_RESET_SECONDS = 60
+
 
 GENERIC_ALERT_SUBJECT = "NeuroFlow: nova atualizacao clinica"
 GENERIC_ALERT_BODY = (
@@ -40,6 +47,9 @@ class NotificationService:
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.sender = os.getenv("ALERT_FROM_EMAIL", self.smtp_user)
         self.sms_webhook_url = os.getenv("SMS_WEBHOOK_URL", "")
+        # Circuit breaker state for push webhook
+        self._push_consecutive_failures = 0
+        self._push_circuit_open_until = 0.0
         self.push_webhook_url = self._validated_webhook_url(
             os.getenv("PUSH_WEBHOOK_URL", "")
         )
@@ -163,14 +173,33 @@ class NotificationService:
                 }
             },
         }).encode("utf-8")
+        # Circuit breaker: fast-fail while circuit is open.
+        if time.monotonic() < self._push_circuit_open_until:
+            return False
+
         req = request.Request(
             self.push_webhook_url,
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with request.urlopen(req, timeout=10) as response:
-            return 200 <= response.status < 300
+        for attempt in range(_PUSH_MAX_ATTEMPTS):
+            try:
+                with request.urlopen(req, timeout=5) as response:
+                    success = 200 <= response.status < 300
+                if success:
+                    self._push_consecutive_failures = 0
+                    return True
+            except Exception:
+                pass
+            if attempt < _PUSH_MAX_ATTEMPTS - 1:
+                time.sleep(_PUSH_RETRY_BACKOFF_BASE * (2 ** attempt))
+
+        self._push_consecutive_failures += 1
+        if self._push_consecutive_failures >= _PUSH_CIRCUIT_THRESHOLD:
+            self._push_circuit_open_until = time.monotonic() + _PUSH_CIRCUIT_RESET_SECONDS
+            self._push_consecutive_failures = 0
+        return False
 
 
 notifications = NotificationService()

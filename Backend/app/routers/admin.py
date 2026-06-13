@@ -58,12 +58,24 @@ def admin_purge_refresh_tokens(db: Session = Depends(get_db)):
         .delete(synchronize_session=False)
     )
 
+    # Purge pending invites whose expiry has passed.
+    purged_invites = (
+        db.query(models.ClinicianPatientInvite)
+        .filter(
+            models.ClinicianPatientInvite.status == models.InviteStatus.pending.value,
+            models.ClinicianPatientInvite.expires_at.isnot(None),
+            models.ClinicianPatientInvite.expires_at < now,
+        )
+        .delete(synchronize_session=False)
+    )
+
     db.commit()
     return schemas.AdminPurgeResponse(
         deleted_refresh_tokens=purged_refresh,
         deleted_access_token_jtis=purged_jtis,
         deleted_password_reset_tokens=purged_resets,
         deleted_totp_pending_sessions=purged_totp,
+        deleted_expired_invites=purged_invites,
     )
 
 
@@ -72,7 +84,7 @@ def admin_revoke_sessions(user_id: int, db: Session = Depends(get_db)):
     """Cuts every still-valid token for the target user (Sprint 15)."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
     user.token_epoch = user.token_epoch + 1
     now = utcnow()
@@ -104,7 +116,7 @@ def admin_revoke_sessions(user_id: int, db: Session = Depends(get_db)):
 def admin_set_role(user_id: int, payload: schemas.AdminPromoteRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
     user.role = payload.role
     db.add(models.AuditLog(
         actor_user_id=user.id,

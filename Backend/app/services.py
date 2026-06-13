@@ -554,6 +554,14 @@ def notify_linked_clinicians(
         return
 
     clinicians = db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
+    # Batch-load all device tokens to avoid N+1 query (one per clinician).
+    all_tokens = db.query(models.DeviceToken).filter(
+        models.DeviceToken.user_id.in_(clinician_ids)
+    ).all()
+    tokens_by_clinician: dict[int, list[models.DeviceToken]] = {}
+    for t in all_tokens:
+        tokens_by_clinician.setdefault(t.user_id, []).append(t)
+
     patient_name = decrypted_full_name(patient)
     for clinician in clinicians:
         try:
@@ -561,8 +569,7 @@ def notify_linked_clinicians(
                 clinician.email, patient_name, title, message
             )
             log_notification(db, patient.id, clinician.email, "email", "clinical_alert", sent_email, title)
-            tokens = db.query(models.DeviceToken).filter(models.DeviceToken.user_id == clinician.id).all()
-            for token in tokens:
+            for token in tokens_by_clinician.get(clinician.id, []):
                 # title/body are stripped inside send_push_webhook (PHI-safe).
                 # Only event_type and patient_id survive the safe_data whitelist
                 # so the clinician app can route to the right screen without
@@ -602,6 +609,14 @@ def notify_linked_clinicians_report(
         return
 
     clinicians = db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
+    # Batch-load all device tokens to avoid N+1 query (one per clinician).
+    all_tokens = db.query(models.DeviceToken).filter(
+        models.DeviceToken.user_id.in_(clinician_ids)
+    ).all()
+    tokens_by_clinician: dict[int, list[models.DeviceToken]] = {}
+    for t in all_tokens:
+        tokens_by_clinician.setdefault(t.user_id, []).append(t)
+
     patient_name = decrypted_full_name(patient)
     for clinician in clinicians:
         try:
@@ -612,8 +627,7 @@ def notify_linked_clinicians_report(
                 db, patient.id, clinician.email,
                 "email", "clinical_report", sent_email, "automatic_report",
             )
-            tokens = db.query(models.DeviceToken).filter(models.DeviceToken.user_id == clinician.id).all()
-            for token in tokens:
+            for token in tokens_by_clinician.get(clinician.id, []):
                 sent_push = notifications.send_push_webhook(
                     token.token,
                     "NeuroFlow",

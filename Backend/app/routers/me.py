@@ -63,6 +63,13 @@ def update_me(
         if conflict is not None:
             raise HTTPException(status_code=409, detail="Email already in use")
         user.email = payload.email
+        # Invalidate all existing sessions — email is an identity anchor.
+        # Any token issued before this change is rejected by current_user epoch check.
+        user.token_epoch = user.token_epoch + 1
+        db.query(models.RefreshToken).filter(
+            models.RefreshToken.user_id == user.id,
+            models.RefreshToken.revoked_at.is_(None),
+        ).update({models.RefreshToken.revoked_at: utcnow()}, synchronize_session=False)
         audit(db, user, "update_email", "user", str(user.id))
         changed = True
 
@@ -376,6 +383,17 @@ def revoke_clinician_access(
         invite.status = models.InviteStatus.revoked.value
         invite.decided_at = utcnow()
 
+    # Increment clinician's token_epoch so any active JWT they hold is
+    # immediately rejected by current_user — revocation takes effect instantly
+    # instead of waiting for the 30-day refresh token TTL to expire.
+    clinician = db.query(models.User).filter(models.User.id == clinician_id).first()
+    if clinician is not None:
+        clinician.token_epoch = clinician.token_epoch + 1
+        db.query(models.RefreshToken).filter(
+            models.RefreshToken.user_id == clinician_id,
+            models.RefreshToken.revoked_at.is_(None),
+        ).update({models.RefreshToken.revoked_at: utcnow()}, synchronize_session=False)
+
     audit(db, user, "revoke_clinician_access", "user", str(clinician_id))
     db.commit()
     return schemas.MessageResponse(message="Acesso do médico removido.")
@@ -413,7 +431,7 @@ def accept_clinician_invite(
         models.ClinicianPatientInvite.status == models.InviteStatus.pending.value,
     ).first()
     if invite is None:
-        raise HTTPException(status_code=404, detail="Invite not found")
+        raise HTTPException(status_code=404, detail="Convite não encontrado")
 
     invite.status = models.InviteStatus.accepted.value
     invite.decided_at = utcnow()
@@ -428,8 +446,15 @@ def accept_clinician_invite(
         ))
 
     audit(db, user, "accept_clinician_invite", "user", str(invite.clinician_id))
-    db.commit()
-    db.refresh(invite)
+    try:
+        db.commit()
+    except Exception:
+        # Concurrent accept: UNIQUE constraint on ClinicianPatientLink fired.
+        # Link already exists — treat as idempotent success.
+        db.rollback()
+        db.refresh(invite)
+    else:
+        db.refresh(invite)
     return invite_read(db, invite)
 
 
@@ -445,7 +470,7 @@ def revoke_clinician_invite(
         models.ClinicianPatientInvite.patient_id == user.id,
     ).first()
     if invite is None:
-        raise HTTPException(status_code=404, detail="Invite not found")
+        raise HTTPException(status_code=404, detail="Convite não encontrado")
 
     invite.status = models.InviteStatus.revoked.value
     invite.decided_at = utcnow()

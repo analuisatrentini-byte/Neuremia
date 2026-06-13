@@ -4,13 +4,14 @@ import json
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import current_user, require_role
 from ..notifications import notifications
+from ..rate_limit import limiter
 from ..security import encrypt_field
 from ..services import (
     alert_read,
@@ -32,7 +33,9 @@ router = APIRouter(tags=["clinical"])
 
 
 @router.post("/checkins", response_model=schemas.DailyCheckInRead)
+@limiter.limit("30/minute")
 def create_checkin(
+    request: Request,
     payload: schemas.DailyCheckInCreate,
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
@@ -68,14 +71,16 @@ def create_checkin(
 
 
 @router.post("/assessments", response_model=schemas.ScaleAssessmentRead)
+@limiter.limit("10/minute")
 def create_assessment(
+    request: Request,
     payload: schemas.ScaleAssessmentCreate,
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
 ):
     patient_id = user.id if user.role == models.UserRole.patient.value else payload.patient_id
     if patient_id is None or not can_access_patient(db, user, patient_id):
-        raise HTTPException(status_code=403, detail="No access to patient")
+        raise HTTPException(status_code=403, detail="Acesso negado ao paciente")
     if not has_active_consent(db, patient_id, "clinical_data_storage"):
         raise HTTPException(status_code=403, detail="Consentimento LGPD para armazenamento clínico não concedido")
 
@@ -94,14 +99,16 @@ def create_assessment(
 
 
 @router.post("/reports", response_model=schemas.ClinicalReportRead)
+@limiter.limit("10/minute")
 def create_report(
+    request: Request,
     payload: schemas.ClinicalReportCreate,
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
 ):
     patient_id = user.id if user.role == models.UserRole.patient.value else payload.patient_id
     if patient_id is None or not can_access_patient(db, user, patient_id):
-        raise HTTPException(status_code=403, detail="No access to patient")
+        raise HTTPException(status_code=403, detail="Acesso negado ao paciente")
     if not has_active_consent(db, patient_id, "clinical_data_storage"):
         raise HTTPException(status_code=403, detail="Consentimento LGPD para armazenamento clínico não concedido")
 
@@ -173,7 +180,7 @@ def delete_checkin(
         .first()
     )
     if checkin is None:
-        raise HTTPException(status_code=404, detail="Check-in not found")
+        raise HTTPException(status_code=404, detail="Check-in não encontrado")
     checkin.deleted_at = datetime.now(timezone.utc)
     audit(db, user, "delete_checkin", "daily_checkin", str(checkin_id))
     db.commit()

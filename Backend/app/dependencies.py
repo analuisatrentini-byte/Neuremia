@@ -21,25 +21,25 @@ def current_user(
 ) -> models.User:
     payload = decode_access_token_payload(token)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
     jti = payload.get("jti")
     if isinstance(jti, str) and jti:
         if db.query(models.RevokedAccessToken).filter_by(jti=jti).first() is not None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revogado")
 
     try:
         user_id = int(subject)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado")
 
     # Sprint B: antes a checagem só rejeitava se `epoch` fosse int E menor que o
     # do usuário. Token sem o claim (legado, malformado, ou forjado por bypass
@@ -49,7 +49,7 @@ def current_user(
     if not isinstance(token_epoch, int) or token_epoch < user.token_epoch:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token issued before session revocation",
+            detail="Token emitido antes da revogação de sessão",
         )
 
     return user
@@ -61,7 +61,7 @@ def require_admin(
     if not verify_admin_api_key(x_admin_api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin API key required",
+            detail="Chave de API administrativa obrigatória",
         )
 
 
@@ -69,5 +69,5 @@ def require_role(user: models.User, role: str) -> None:
     if user.role != role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Requires {role} role",
+            detail=f"Requer perfil de {role}",
         )

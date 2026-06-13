@@ -247,6 +247,7 @@ extension ContentView {
 
                     Button {
                         biometricConsentAccepted = true
+                        biometricConsentGrantedAt = Date().timeIntervalSince1970
                         // M4 — sync grant with backend consent registry.
                         if !authToken.isEmpty {
                             Task { try? await BackendAuthClient.grantBiometricConsent(token: authToken) }

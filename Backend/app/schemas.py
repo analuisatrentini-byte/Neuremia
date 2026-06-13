@@ -47,6 +47,7 @@ class AdminPurgeResponse(BaseModel):
     deleted_access_token_jtis: int = 0
     deleted_password_reset_tokens: int = 0
     deleted_totp_pending_sessions: int = 0
+    deleted_expired_invites: int = 0
 
 
 class AdminRevokeSessionsResponse(BaseModel):

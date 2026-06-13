@@ -159,19 +159,23 @@ def test_revoke_clinical_access_removes_link_and_blocks_doc(client, admin_api_ke
     )
     assert response.status_code == 200
 
-    # Clinician loses access immediately.
+    # Clinician loses access immediately. Token epoch is incremented on revoke,
+    # so the existing JWT is invalidated (401); a freshly-issued token would
+    # get 403. Either means access is denied.
     forbidden = client.get(
         f"/v1/patients/{patient['user']['id']}/checkins",
         headers=_bearer(doc_token),
     )
-    assert forbidden.status_code == 403
+    assert forbidden.status_code in (401, 403)
 
     # Patient's list of linked clinicians is empty.
     listing = client.get("/v1/me/linked-clinicians", headers=_bearer(pat_token))
     assert listing.json() == []
 
     # The clinician's view of sent invites surfaces revoked status (Sprint 9).
-    sent = client.get("/v1/clinician/invites", headers=_bearer(doc_token)).json()
+    # Re-login: token_epoch was incremented on revoke, so old JWT is invalid.
+    fresh_doc_token = login(client, email="linked-doc@example.com")
+    sent = client.get("/v1/clinician/invites", headers=_bearer(fresh_doc_token)).json()
     assert any(item["status"] == "revoked" for item in sent)
 
 

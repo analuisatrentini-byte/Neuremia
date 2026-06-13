@@ -64,7 +64,7 @@ def update_caregiver(
         models.CaregiverContact.patient_id == user.id,
     ).first()
     if caregiver is None:
-        raise HTTPException(status_code=404, detail="Caregiver not found")
+        raise HTTPException(status_code=404, detail="Cuidador não encontrado")
 
     caregiver.name = payload.name
     caregiver.contact = encrypt_field(payload.contact)
@@ -90,7 +90,7 @@ def delete_caregiver(
         models.CaregiverContact.patient_id == user.id,
     ).first()
     if caregiver is None:
-        raise HTTPException(status_code=404, detail="Caregiver not found")
+        raise HTTPException(status_code=404, detail="Cuidador não encontrado")
 
     db.delete(caregiver)
     audit(db, user, "delete_caregiver", "caregiver_contact", str(caregiver_id))

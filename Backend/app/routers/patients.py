@@ -13,6 +13,7 @@ from ..services import (
     can_access_patient,
     checkin_read,
     report_read,
+    update_risk_cache,
 )
 
 
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 
 def _ensure_access(db: Session, user: models.User, patient_id: int) -> None:
     if not can_access_patient(db, user, patient_id):
-        raise HTTPException(status_code=403, detail="No access to patient")
+        raise HTTPException(status_code=403, detail="Acesso negado ao paciente")
 
 
 @router.get("/{patient_id}/checkins", response_model=list[schemas.DailyCheckInRead])
@@ -130,7 +131,7 @@ def acknowledge_alert(
         .first()
     )
     if alert is None:
-        raise HTTPException(status_code=404, detail="Alert not found")
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
 
     # Idempotente: ack 2× não causa erro, só audita uma vez.
     if not alert.acknowledged:
@@ -138,4 +139,7 @@ def acknowledge_alert(
         audit(db, user, "acknowledge_alert", "clinical_alert", str(alert.id))
         db.commit()
         db.refresh(alert)
+        # Recalculate risk so dashboard reflects that pending alert is resolved.
+        update_risk_cache(db, patient_id)
+        db.commit()
     return alert_read(alert)

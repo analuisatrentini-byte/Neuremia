@@ -276,7 +276,11 @@ extension ContentView {
                                 get: { patient.consentAccepted },
                                 set: { newValue in
                                     patient.consentAccepted = newValue
-                                    try? modelContext.save()
+                                    do {
+                                        try modelContext.save()
+                                    } catch {
+                                        saveStatusMessage = "Não foi possível salvar o consentimento: \(error.localizedDescription)"
+                                    }
                                 }
                             )) {
                                 Text("Aceito acompanhar meu humor com segurança.")

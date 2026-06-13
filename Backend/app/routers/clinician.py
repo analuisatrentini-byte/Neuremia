@@ -35,14 +35,14 @@ def create_clinician_invite(
         models.User.role == models.UserRole.patient.value,
     ).first()
     if patient is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Paciente não encontrado")
 
     existing_link = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == user.id,
         models.ClinicianPatientLink.patient_id == patient.id,
     ).first()
     if existing_link is not None:
-        raise HTTPException(status_code=409, detail="Patient already linked")
+        raise HTTPException(status_code=409, detail="Paciente já vinculado")
 
     pending = db.query(models.ClinicianPatientInvite).filter(
         models.ClinicianPatientInvite.clinician_id == user.id,
@@ -100,7 +100,7 @@ def link_patient_deprecated(
     )
     patient = db.query(models.User).filter(models.User.id == invite_response.patient_id).first()
     if patient is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Paciente não encontrado")
     return user_read(db, patient, include_risk=False)
 
 

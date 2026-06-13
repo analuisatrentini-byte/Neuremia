@@ -65,7 +65,7 @@ enum KeychainStore {
             let query = baseQuery(for: key)
             let attributes: [String: Any] = [
                 kSecValueData as String: data,
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
             ]
             let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
             if updateStatus == errSecSuccess {
@@ -73,7 +73,7 @@ enum KeychainStore {
             } else if updateStatus == errSecItemNotFound {
                 var insert = query
                 insert[kSecValueData as String] = data
-                insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
                 return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
             }
             return false

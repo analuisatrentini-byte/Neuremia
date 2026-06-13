@@ -131,11 +131,14 @@ struct NeuroFlowApp: App {
             return
         }
 
-        // 3rd try — in-memory fallback. Always succeeds. The app stays open so
-        // the user can still access the crisis plan and SOS contacts.
+        // 3rd try — in-memory fallback. The app stays open so the user can
+        // still access the crisis plan and SOS contacts.
         let inMemoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        // swiftlint:disable:next force_try
-        sharedModelContainer = try! ModelContainer(for: schema, configurations: [inMemoryConfig])
+        do {
+            sharedModelContainer = try ModelContainer(for: schema, configurations: [inMemoryConfig])
+        } catch {
+            fatalError("In-memory ModelContainer failed unexpectedly: \(error)")
+        }
         NeuroFlowApp.storeRecoveryMessage =
             "Não foi possível abrir o banco de dados local. O aplicativo está " +
             "funcionando sem persistência — dados deste uso não serão salvos. " +

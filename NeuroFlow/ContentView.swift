@@ -239,6 +239,8 @@ struct ContentView: View {
     @AppStorage("neuroflowOfflineSyncQueueData") var offlineSyncQueueData = ""
     @AppStorage("neuroflowLastSyncStatus") var lastSyncStatus = "Salvo no aparelho"
     @AppStorage("neuroflowBiometricConsentAccepted") var biometricConsentAccepted = false
+    /// LGPD: timestamp (seconds since epoch) when biometric consent was granted. 0 = not yet granted.
+    @AppStorage("neuroflowBiometricConsentGrantedAt") var biometricConsentGrantedAt: Double = 0
     @AppStorage("neuroflowPrivacyRetentionDays") var privacyRetentionDays = 365
     @State var privacyStatusMessage = ""
     @State var privacyExportURL: URL?
@@ -249,6 +251,7 @@ struct ContentView: View {
     @State var isShowingPrivacyPolicy = false
     @State var remoteAuditLogs: [BackendAuditLog] = []
     @State var caregiverEditTarget: BackendCaregiverContact?
+    @State var caregiverToggleTarget: BackendCaregiverContact?
     @State var caregiverStatusMessage = ""
     @State var caregiverEditName = ""
     @State var caregiverEditContact = ""
@@ -363,7 +366,10 @@ struct ContentView: View {
         // activeAlerts. Without this, acknowledged alerts stay visible until
         // another count-changing event happens.
         let ackedCount = alerts.filter(\.acknowledged).count
-        return "\(checkIns.count)-\(assessments.count)-\(alerts.count)-\(ackedCount)-\(reports.count)"
+        // Include last check-in timestamp so edits to the most recent entry
+        // (same count, different values) still trigger .task(id:) re-fire.
+        let lastCheckInKey = checkIns.last.map { "\($0.date.timeIntervalSinceReferenceDate)" } ?? ""
+        return "\(checkIns.count)-\(assessments.count)-\(alerts.count)-\(ackedCount)-\(reports.count)-\(lastCheckInKey)"
     }
 
     func computeFullStoreFingerprint() -> String {
@@ -422,7 +428,7 @@ struct ContentView: View {
             medicationStatus: medicationStatus,
             activeTriggers: activeTriggerLabels,
             textAssessment: currentTextAssessment,
-            ppgStress: ppgManager.stress,
+            ppgStress: ppgManager.isHeartRatePhysiologicallyValid ? ppgManager.stress : 0,
             ppgQuality: ppgManager.isHeartRatePhysiologicallyValid ? ppgManager.signalQuality : 0,
             voicePauseRatio: voiceManager.pauseRatio,
             typingSpeed: bodySignalTypingSpeed,
@@ -780,18 +786,33 @@ struct ContentView: View {
             }
             .onAppear {
                 prepareInitialData()
+                Task { @MainActor in retryPendingSync() }
                 networkMonitor.pathUpdateHandler = { path in
                     guard path.status == .satisfied else { return }
                     Task { @MainActor in retryPendingSync() }
                 }
                 networkMonitor.start(queue: networkMonitorQueue)
                 if !authToken.isEmpty {
-                    Task {
-                        await loadCaregivers()
-                        await syncMyBackendAlerts()
-                        await loadPendingInvites()
-                        await loadLinkedClinicians()
-                        await loadClinicianSentInvites()
+                    // Corrupted userId: token exists but stored id can't be parsed.
+                    // Force logout to prevent a session where syncs silently fail.
+                    if !_authenticatedUserIdStr.isEmpty, Int(_authenticatedUserIdStr) == nil {
+                        loginStatusMessage = "Estado de sessão inválido. Entre novamente."
+                        authToken = ""
+                        refreshToken = ""
+                        authenticatedEmail = ""
+                        authenticatedName = ""
+                        authenticatedRole = ""
+                        _authenticatedUserIdStr = ""
+                        clearAllLocalPHIDrafts()
+                        isShowingLoginSheet = true
+                    } else {
+                        Task {
+                            await loadCaregivers()
+                            await syncMyBackendAlerts()
+                            await loadPendingInvites()
+                            await loadLinkedClinicians()
+                            await loadClinicianSentInvites()
+                        }
                     }
                 }
             }

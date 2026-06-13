@@ -389,9 +389,15 @@ extension ContentView {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sinais biométricos (câmera e voz)")
                         .font(.subheadline.weight(.semibold))
-                    Text(biometricConsentAccepted ? "Consentimento ativo — processamento local." : "Consentimento não concedido.")
-                        .font(.caption)
-                        .foregroundStyle(biometricConsentAccepted ? .green : .secondary)
+                    if biometricConsentAccepted && biometricConsentGrantedAt > 0 {
+                        Text("Consentimento ativo desde \(Date(timeIntervalSince1970: biometricConsentGrantedAt).formatted(date: .abbreviated, time: .shortened)).")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Text(biometricConsentAccepted ? "Consentimento ativo — processamento local." : "Consentimento não concedido.")
+                            .font(.caption)
+                            .foregroundStyle(biometricConsentAccepted ? .green : .secondary)
+                    }
                 }
                 Spacer()
                 if biometricConsentAccepted {
@@ -399,6 +405,7 @@ extension ContentView {
                         ppgManager.stop()
                         voiceManager.stop()
                         biometricConsentAccepted = false
+                        biometricConsentGrantedAt = 0
                         // M4 — sync revocation with backend consent registry.
                         if !authToken.isEmpty {
                             Task { try? await BackendAuthClient.revokeBiometricConsent(token: authToken) }
@@ -632,7 +639,7 @@ extension ContentView {
                         .accessibilityLabel("Remover cuidador \(caregiver.name)")
 
                         Button {
-                            Task { await toggleCaregiverSharing(caregiver) }
+                            caregiverToggleTarget = caregiver
                         } label: {
                             Image(systemName: caregiver.shareEnabled ? "bell.slash" : "bell")
                         }
@@ -645,6 +652,19 @@ extension ContentView {
             }
 
             // P1-2: status migrado para toast central.
+        }
+        .confirmationDialog(
+            caregiverToggleTarget.map { $0.shareEnabled ? "Pausar notificações para \($0.name)?" : "Reativar notificações para \($0.name)?" } ?? "",
+            isPresented: Binding(get: { caregiverToggleTarget != nil }, set: { if !$0 { caregiverToggleTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let target = caregiverToggleTarget {
+                Button(target.shareEnabled ? "Pausar" : "Reativar") {
+                    Task { await toggleCaregiverSharing(target) }
+                    caregiverToggleTarget = nil
+                }
+                Button("Cancelar", role: .cancel) { caregiverToggleTarget = nil }
+            }
         }
         .panelStyle()
         // Borda lateral azul — "cuidador/rede de apoio com permissão de

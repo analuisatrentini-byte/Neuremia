@@ -341,7 +341,7 @@ extension ContentView {
             }
 
             if insertedAny {
-                try? modelContext.save()
+                try modelContext.save()
             }
         } catch {
             // Silent: patient still sees locally generated alerts.
@@ -1167,7 +1167,11 @@ extension ContentView {
         guard !trimmed.isEmpty else { return }
         let prefix = latest.journalEntry.isEmpty ? "" : latest.journalEntry + "\n\n"
         latest.journalEntry = prefix + trimmed
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            saveStatusMessage = "Não foi possível salvar o registro: \(error.localizedDescription)"
+        }
     }
 
     var passwordResetConfirmSheet: some View {
