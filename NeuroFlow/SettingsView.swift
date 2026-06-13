@@ -1,0 +1,1539 @@
+//
+//  SettingsView.swift
+//  NeuroFlow
+//
+
+import SwiftUI
+import SwiftData
+import HealthKit
+import UIKit
+
+extension ContentView {
+    var settingsDashboard: some View {
+        Form {
+            Section("Conta") {
+                settingsNavLink(
+                    icon: "person.crop.circle.fill",
+                    tint: .blue,
+                    label: isLoggedIn ? "Login e perfil" : "Entrar na conta",
+                    subtitle: authenticatedEmail.isEmpty ? "Não autenticado" : authenticatedEmail
+                ) {
+                    scrollableDetail(title: "Conta") { loginSettingsCard }
+                }
+
+                Button {
+                    // Sprint 23: paciente que pulou o onboarding ganha um
+                    // caminho de volta. Marca a flag como falsa — o
+                    // fullScreenCover dispara no próximo render.
+                    hasCompletedOnboarding = false
+                    onboardingStep = 0
+                    isShowingSettings = false
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(Color.purple)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Refazer apresentação")
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                            Text("Veja as boas-vindas e ajuste seu foco de cuidado.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                settingsNavLink(
+                    icon: "person.text.rectangle.fill",
+                    tint: .indigo,
+                    label: "Perfil de acesso",
+                    subtitle: activeRole == .clinician ? "Médico" : "Paciente"
+                ) {
+                    scrollableDetail(title: "Perfil de acesso") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Perfil de acesso", selection: roleBinding) {
+                                ForEach(AccessRole.allCases) { role in
+                                    Label(role.rawValue, systemImage: role.icon).tag(role)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            // Sprint A: confirmation dialog antes de aplicar.
+                            .confirmationDialog(
+                                roleChangePending == .clinician
+                                    ? "Trocar para perfil médico?"
+                                    : "Trocar para perfil paciente?",
+                                isPresented: Binding(
+                                    get: { roleChangePending != nil },
+                                    set: { if !$0 { roleChangePending = nil } }
+                                ),
+                                titleVisibility: .visible
+                            ) {
+                                Button(roleChangePending == .clinician ? "Alternar para médico" : "Alternar para paciente") {
+                                    if let pending = roleChangePending {
+                                        applyRoleChange(pending)
+                                    }
+                                    roleChangePending = nil
+                                }
+                                Button("Cancelar", role: .cancel) { roleChangePending = nil }
+                            } message: {
+                                Text("A troca muda o dashboard ativo e os dados visíveis. Você pode reverter a qualquer momento.")
+                            }
+
+                            PrivacyStatusGrid(
+                                consentAccepted: patients.first?.consentAccepted == true,
+                                shareWithClinician: patients.first?.shareWithClinician == true,
+                                shareWithCaregiver: shareWithCaregiver,
+                                activeRole: activeRole
+                            )
+                        }
+                        .panelStyle()
+                    }
+                }
+            }
+
+            Section("Privacidade e dados") {
+                settingsNavLink(
+                    icon: "lock.shield.fill",
+                    tint: .red,
+                    label: "Meus dados (LGPD)",
+                    subtitle: "Exportar, apagar, ver auditoria"
+                ) {
+                    scrollableDetail(title: "Privacidade e dados") { privacyAndDataCard }
+                }
+
+                // P2-2 (UX): seção renomeada de "Compliance" para
+                // "Segurança e privacidade" com linguagem acessível para
+                // pacientes e clínicos, sem jargão técnico de infraestrutura.
+                settingsNavLink(
+                    icon: "lock.shield",
+                    tint: .blue,
+                    label: "Segurança e privacidade",
+                    subtitle: "Como seus dados são protegidos"
+                ) {
+                    scrollableDetail(title: "Segurança e privacidade") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ComplianceRow(icon: "person.badge.key", title: "Acesso seguro", description: "Suas credenciais nunca ficam salvas em texto puro. A sessão expira automaticamente e pode ser encerrada a qualquer momento.")
+                            ComplianceRow(icon: "checkmark.seal", title: "Você decide o que compartilha", description: "O app bloqueia o salvamento até que você aceite expressamente. Autorizar o registro é independente de autorizar o compartilhamento com seu médico.")
+                            ComplianceRow(icon: "lock.doc", title: "Dados criptografados no dispositivo", description: "Textos sensíveis (diário, pensamentos, efeitos colaterais) são criptografados antes de serem armazenados no seu aparelho.")
+                            ComplianceRow(icon: "eye.slash", title: "Acesso do seu médico é controlado", description: "Seu médico só consegue ver seus dados após você aceitar o convite. Você pode revogar esse acesso a qualquer momento em Configurações → Profissionais com acesso.")
+                            ComplianceRow(icon: "doc.text", title: "Lei Geral de Proteção de Dados (LGPD)", description: "Você pode exportar todos os seus dados ou solicitar a exclusão da conta a qualquer momento em Configurações → Privacidade e dados.")
+                        }
+                        .panelStyle()
+                    }
+                }
+            }
+
+            Section("Pessoas") {
+                settingsNavLink(
+                    icon: "stethoscope",
+                    tint: .green,
+                    label: "Profissionais com acesso",
+                    subtitle: linkedClinicians.isEmpty ? "Nenhum vínculo ativo" : "\(linkedClinicians.count) profissionais"
+                ) {
+                    scrollableDetail(title: "Profissionais") { linkedCliniciansCard }
+                }
+
+                settingsNavLink(
+                    icon: "person.2.fill",
+                    tint: .blue,
+                    label: "Cuidadores",
+                    subtitle: remoteCaregivers.isEmpty ? "Nenhum cadastrado" : "\(remoteCaregivers.count) cadastrados"
+                ) {
+                    scrollableDetail(title: "Cuidadores") { caregiverManagementCard }
+                }
+            }
+
+            Section("Notificações") {
+                settingsNavLink(
+                    icon: "bell.badge.fill",
+                    tint: .orange,
+                    label: "Lembretes diários",
+                    subtitle: nil
+                ) {
+                    scrollableDetail(title: "Lembretes") { reminderSettingsCard }
+                }
+
+                settingsNavLink(
+                    icon: "antenna.radiowaves.left.and.right",
+                    tint: .purple,
+                    label: "Push remoto",
+                    subtitle: remotePushStatus
+                ) {
+                    scrollableDetail(title: "Push remoto") {
+                        RemotePushCard(
+                            isEnabled: $remotePushEnabled,
+                            status: remotePushStatus,
+                            token: apnsDeviceToken,
+                            register: { Task { await requestRemotePushRegistration() } },
+                            uploadToken: { Task { await uploadPushTokenToBackend() } }
+                        )
+                    }
+                }
+            }
+
+            Section("Integrações") {
+                settingsNavLink(
+                    icon: "heart.fill",
+                    tint: .pink,
+                    label: "Apple Health",
+                    subtitle: healthKitStatus
+                ) {
+                    scrollableDetail(title: "Apple Health") {
+                        HealthKitIntegrationCard(
+                            isEnabled: $healthKitEnabled,
+                            status: healthKitStatus,
+                            sleepHours: healthSleepHours,
+                            steps: healthSteps,
+                            heartRate: healthHeartRate,
+                            activeEnergy: healthActiveEnergy,
+                            sync: { Task { await requestHealthKitAccessAndSync() } }
+                        )
+                    }
+                }
+
+                settingsNavLink(
+                    icon: "externaldrive.fill",
+                    tint: .gray,
+                    label: "Backup local",
+                    subtitle: backgroundBackupStatus
+                ) {
+                    scrollableDetail(title: "Backup local") {
+                        BackupExportCard(
+                            backupURL: backupURL,
+                            isAutomatic: $autoBackupEnabled,
+                            intervalDays: $backupIntervalDays,
+                            lastAutomaticBackupAt: lastAutomaticBackupAt,
+                            backupStatus: loginStatusMessage,
+                            backgroundStatus: backgroundBackupStatus,
+                            makeBackup: { makeBackupExport() },
+                            restoreBackup: { isImportingBackup = true }
+                        )
+                    }
+                }
+
+                settingsNavLink(
+                    icon: "envelope.arrow.triangle.branch.fill",
+                    tint: .teal,
+                    label: "Equipe de cuidado",
+                    subtitle: careTeamSendStatus
+                ) {
+                    scrollableDetail(title: "Equipe de cuidado") {
+                        CareTeamAutoSendCard(
+                            isEnabled: $autoCareTeamSendEnabled,
+                            contact: $careTeamContact,
+                            caregiverName: $caregiverName,
+                            caregiverRelationship: $caregiverRelationship,
+                            canShare: patients.first?.consentAccepted == true && (patients.first?.shareWithClinician == true || shareWithCaregiver),
+                            canShareCaregiver: patients.first?.consentAccepted == true && shareWithCaregiver,
+                            status: careTeamSendStatus,
+                            caregivers: remoteCaregivers,
+                            saveCaregiver: { Task { await saveCaregiverContact() } },
+                            refreshCaregivers: { Task { await loadCaregivers() } },
+                            sendNow: sendCurrentReportToCareTeam
+                        )
+                    }
+                }
+            }
+
+            #if DEBUG
+            Section("Diagnóstico interno") {
+                NavigationLink("Status de produção") {
+                    scrollableDetail(title: "Status de produção") { ProductionReadinessCard() }
+                }
+                NavigationLink("Validação clínica") {
+                    scrollableDetail(title: "Validação clínica") { ClinicalValidationRoadmapCard() }
+                }
+            }
+            #endif
+        }
+    }
+
+    /// Linha padrão de Settings — ícone colorido com tint + label + subtítulo.
+    /// Cor da bolinha distingue grupos sem precisar ler.
+    @ViewBuilder
+    func settingsNavLink<Destination: View>(
+        icon: String,
+        tint: Color,
+        label: String,
+        subtitle: String?,
+        @ViewBuilder destination: () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(tint)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    var privacyAndDataCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionTitle(icon: "lock.shield", title: "Privacidade e dados (LGPD)")
+
+            Text("Direitos do titular: exportar tudo que está armazenado, apagar registros antigos ou encerrar sua conta. Estas ações usam endpoints autenticados do backend.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !privacyStatusMessage.isEmpty {
+                Label(privacyStatusMessage, systemImage: "info.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button {
+                Task { await exportMyAccount() }
+            } label: {
+                Label("Baixar meus dados (JSON)", systemImage: "arrow.down.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(authToken.isEmpty)
+            .accessibilityHint("Solicita ao backend uma exportação completa da sua conta em JSON.")
+
+            if let exportURL = privacyExportURL {
+                ShareLink(item: exportURL) {
+                    Label("Compartilhar exportação", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            // Picker semântico no lugar do Stepper (Sprint 21) — paciente
+            // pensa em "1 ano" ou "6 meses", não em "1290 dias".
+            // P2-11 (UX): label sem reticências + valor selecionado visível.
+            Picker("Retenção de dados", selection: $privacyRetentionDays) {
+                Text("90 dias").tag(90)
+                Text("6 meses").tag(180)
+                Text("1 ano").tag(365)
+                Text("2 anos").tag(730)
+                Text("5 anos").tag(1825)
+            }
+            .pickerStyle(.menu)
+            .accessibilityHint("Define a janela mantida no backend. Registros mais antigos podem ser apagados pelo botão abaixo.")
+
+            Button(role: .destructive) {
+                isConfirmingClinicalWipe = true
+            } label: {
+                Label("Apagar dados clínicos antigos", systemImage: "trash")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(authToken.isEmpty)
+            .accessibilityHint("Remove do backend registros com mais de \(privacyRetentionDays) dias.")
+
+            Button {
+                Task { await fetchAuditLogs() }
+            } label: {
+                Label("Ver minha auditoria", systemImage: "list.bullet.rectangle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(authToken.isEmpty)
+
+            Divider()
+
+            // LGPD Art. 9 § 1 — consentimento para dados biométricos deve ser
+            // destacado, específico e revogável a qualquer momento.
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sinais biométricos (câmera e voz)")
+                        .font(.subheadline.weight(.semibold))
+                    Text(biometricConsentAccepted ? "Consentimento ativo — processamento local." : "Consentimento não concedido.")
+                        .font(.caption)
+                        .foregroundStyle(biometricConsentAccepted ? .green : .secondary)
+                }
+                Spacer()
+                if biometricConsentAccepted {
+                    Button(role: .destructive) {
+                        ppgManager.stop()
+                        voiceManager.stop()
+                        biometricConsentAccepted = false
+                    } label: {
+                        Text("Revogar")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+            }
+            .accessibilityElement(children: .combine)
+
+            Button(role: .destructive) {
+                isConfirmingAccountDelete = true
+            } label: {
+                Label("Apagar minha conta", systemImage: "person.crop.circle.badge.xmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .disabled(authToken.isEmpty)
+            .accessibilityHint("Remove conta, vínculos médicos, alertas, relatórios e tokens do backend.")
+        }
+        .panelStyle()
+        .alert("Apagar dados clínicos antigos?", isPresented: $isConfirmingClinicalWipe) {
+            Button("Apagar", role: .destructive) {
+                Task { await deleteOldClinicalData() }
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            Text("Apaga do backend todos os check-ins, escalas, alertas e relatórios com mais de \(privacyRetentionDays) dias. Os dados locais no aparelho permanecem.")
+        }
+        .alert("Apagar minha conta definitivamente?", isPresented: $isConfirmingAccountDelete) {
+            Button("Apagar minha conta", role: .destructive) {
+                Task { await deleteMyAccount() }
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            Text("Esta ação remove conta, vínculos clínicos, alertas, relatórios, tokens e cuidadores no backend. Não pode ser desfeita.")
+        }
+        .sheet(isPresented: $isShowingAuditLogs) {
+            NavigationStack {
+                List(remoteAuditLogs) { log in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(log.action)
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(log.resourceType) · \(log.resourceId)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(log.createdAt)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .navigationTitle("Minha auditoria")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("OK") { isShowingAuditLogs = false }
+                    }
+                }
+            }
+        }
+    }
+
+    var linkedCliniciansCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "stethoscope", title: "Profissionais com acesso")
+
+            Text("Profissionais que aceitaram acompanhar você. Você pode cancelar o acesso a qualquer momento.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if linkedClinicians.isEmpty {
+                EmptyState(text: authToken.isEmpty ? "Entre na conta para ver quem acompanha você." : "Ninguém está acompanhando você no momento. Quando aceitar um convite, o profissional aparece aqui.")
+            } else {
+                ForEach(linkedClinicians) { clinician in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "person.fill.checkmark")
+                            .foregroundStyle(.green)
+                            .accessibilityHidden(true)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(clinician.clinicianFullName)
+                                .font(.subheadline.weight(.semibold))
+                            Text(clinician.clinicianEmail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button(role: .destructive) {
+                            clinicianToRevoke = clinician
+                        } label: {
+                            Label("Cancelar acesso", systemImage: "xmark.shield")
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("Cancelar acesso de \(clinician.clinicianFullName)")
+                    }
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
+            // P1-2: status migrado para toast central.
+        }
+        .panelStyle()
+        // Borda lateral verde — "médico já tem acesso ativo aos meus dados".
+        // Sprint 21: diferenciação visual contra cards de cuidadores e
+        // convites enviados.
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.green)
+                .frame(width: 4)
+                .padding(.vertical, 2)
+        }
+        .alert(
+            "Cancelar acesso?",
+            isPresented: Binding(
+                get: { clinicianToRevoke != nil },
+                set: { if !$0 { clinicianToRevoke = nil } }
+            ),
+            presenting: clinicianToRevoke
+        ) { clinician in
+            Button("Cancelar acesso", role: .destructive) {
+                Task { await revokeClinicalAccess(clinician) }
+                clinicianToRevoke = nil
+            }
+            Button("Manter", role: .cancel) {
+                clinicianToRevoke = nil
+            }
+        } message: { clinician in
+            Text("\(clinician.clinicianFullName) perderá acesso aos seus check-ins, escalas e alertas. Você pode aceitar um novo convite no futuro.")
+        }
+    }
+
+    var caregiverManagementCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "person.2.gobackward", title: "Cuidadores cadastrados")
+
+            if remoteCaregivers.isEmpty {
+                EmptyState(text: authToken.isEmpty ? "Entre na conta para convidar pessoas de confiança." : "Você pode adicionar alguém de confiança que receberá alertas se algo precisar de atenção.")
+            } else {
+                ForEach(remoteCaregivers) { caregiver in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: caregiver.shareEnabled ? "checkmark.shield.fill" : "shield.slash")
+                            .foregroundStyle(caregiver.shareEnabled ? .green : .secondary)
+                            .accessibilityLabel(caregiver.shareEnabled ? "Compartilhamento ativo" : "Compartilhamento desativado")
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(caregiver.name)
+                                .font(.subheadline.weight(.semibold))
+                            Text(caregiver.contact)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !caregiver.relationship.isEmpty {
+                                Text(caregiver.relationship)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+
+                        Spacer()
+
+                        Button {
+                            beginEditingCaregiver(caregiver)
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        .accessibilityLabel("Editar dados de \(caregiver.name)")
+
+                        Button(role: .destructive) {
+                            Task { await deleteCaregiver(caregiver) }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .accessibilityLabel("Remover cuidador \(caregiver.name)")
+
+                        Button {
+                            Task { await toggleCaregiverSharing(caregiver) }
+                        } label: {
+                            Image(systemName: caregiver.shareEnabled ? "bell.slash" : "bell")
+                        }
+                        .accessibilityLabel(caregiver.shareEnabled ? "Pausar notificações para \(caregiver.name)" : "Reativar notificações para \(caregiver.name)")
+                    }
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+
+            // P1-2: status migrado para toast central.
+        }
+        .panelStyle()
+        // Borda lateral azul — "cuidador/rede de apoio com permissão de
+        // alertas" (Sprint 21).
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.blue)
+                .frame(width: 4)
+                .padding(.vertical, 2)
+        }
+    }
+
+    var reminderSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionTitle(icon: "bell.badge", title: "Lembretes")
+
+            Toggle("Lembrar medicação", isOn: $medicationReminderEnabled)
+                .toggleStyle(.switch)
+
+            // P1-7 (UX): Stepper substituído por DatePicker — era preciso até
+            // 23 toques para mudar o horário. Com o DatePicker basta um gesto.
+            DatePicker(
+                "Horário da medicação",
+                selection: Binding(
+                    get: {
+                        Calendar.current.date(
+                            bySettingHour: medicationReminderHour, minute: 0, second: 0, of: Date()
+                        ) ?? Date()
+                    },
+                    set: { medicationReminderHour = Calendar.current.component(.hour, from: $0) }
+                ),
+                displayedComponents: .hourAndMinute
+            )
+            .disabled(!medicationReminderEnabled)
+
+            Toggle("Lembrar check-in diário", isOn: $checkInReminderEnabled)
+                .toggleStyle(.switch)
+
+            DatePicker(
+                "Horário do check-in",
+                selection: Binding(
+                    get: {
+                        Calendar.current.date(
+                            bySettingHour: checkInReminderHour, minute: 0, second: 0, of: Date()
+                        ) ?? Date()
+                    },
+                    set: { checkInReminderHour = Calendar.current.component(.hour, from: $0) }
+                ),
+                displayedComponents: .hourAndMinute
+            )
+            .disabled(!checkInReminderEnabled)
+
+            Button {
+                Task {
+                    await configureLocalReminders()
+                }
+            } label: {
+                Label("Salvar lembretes no iPhone", systemImage: "bell.and.waves.left.and.right")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Text("As notificações são locais do aparelho. Push remoto exigiria APNs/Firebase e servidor em produção.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .panelStyle()
+    }
+
+    var loginSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: isLoggedIn ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.plus")
+                    .font(.title2)
+                    .foregroundStyle(isLoggedIn ? .white : .black)
+                    .frame(width: 44, height: 44)
+                    .background(isLoggedIn ? Color.green : Color.neuroYellow)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(isLoggedIn ? "Conta conectada" : isCreatingAccount ? "Criar conta" : "Entrar na conta")
+                        .font(.headline)
+
+                    Text(isLoggedIn ? "\(authenticatedName) • \(authenticatedEmail)" : "Entre para sincronizar seus dados com segurança.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            VStack(spacing: 10) {
+                if isCreatingAccount {
+                    TextField("Nome completo", text: $fullName)
+                        .textContentType(.name)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+
+                TextField("E-mail", text: $loginEmail)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.emailAddress)
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                SecureField("Senha", text: $loginPassword)
+                    .textContentType(.password)
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            // P3-1 (UX): botão de logout separado visualmente do de login —
+            // antes usavam o mesmo .borderedProminent e ficavam no mesmo lugar,
+            // risco de logout acidental (ação que limpa a sessão local).
+            if isLoggedIn {
+                Divider()
+                Button(role: .destructive) {
+                    Task { await handleAuthenticationButton() }
+                } label: {
+                    Label("Sair da conta", systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            } else {
+                Button {
+                    Task { await handleAuthenticationButton() }
+                } label: {
+                    Label(authButtonTitle, systemImage: "arrow.right.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isAuthButtonDisabled)
+            }
+
+            if !isLoggedIn {
+                HStack(spacing: 8) {
+                    Button {
+                        isCreatingAccount.toggle()
+                        loginStatusMessage = ""
+                    } label: {
+                        Text(isCreatingAccount ? "Já tenho conta" : "Criar nova conta")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        Task {
+                            await requestPasswordReset()
+                        }
+                    } label: {
+                        Text(isRequestingPasswordReset ? "Enviando..." : "Esqueci a senha")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(loginEmail.isEmpty || isRequestingPasswordReset)
+                }
+
+                Button {
+                    passwordResetStatusMessage = ""
+                    isShowingPasswordResetConfirm = true
+                } label: {
+                    Label("Tenho um código de recuperação", systemImage: "key.horizontal")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(loginEmail.isEmpty)
+                .accessibilityHint("Abre o formulário para enviar o código recebido por e-mail e definir uma nova senha.")
+            }
+
+            // P1-2: loginStatusMessage migrado para toast central.
+            // P2-1 (UX): URL do backend e instrução de infraestrutura
+            // removidas da UI de produção — expor detalhes técnicos prejudica
+            // a confiança do usuário. Visível apenas em builds de Debug.
+            #if DEBUG
+            Text("Debug: conectando em http://127.0.0.1:8000")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            #endif
+        }
+        .panelStyle()
+    }
+
+    // Sprint 25: histórico passa a respeitar `evolutionFilter` + `evolutionSearchQuery`.
+    // O filtro decide quais coleções aparecem; a busca recorta dentro de cada uma.
+    @ViewBuilder
+    var historySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "clock.arrow.circlepath", title: historySectionTitle)
+
+            if historyHasAnyVisibleContent {
+                if evolutionFilter == .all || evolutionFilter == .checkIns {
+                    historyCheckInsGroup
+                }
+                if evolutionFilter == .all || evolutionFilter == .scales {
+                    historyScalesGroup
+                }
+                if evolutionFilter == .all || evolutionFilter == .alerts {
+                    historyAlertsGroup
+                }
+            } else {
+                // P2-3 (UX): empty state com ação direta para o diário
+                // quando ainda não há registros — elimina o dead-end
+                // "leva menos de 1 minuto" sem caminho para começar.
+                EmptyState(
+                    text: historyEmptyMessage,
+                    actionLabel: evolutionFilter == .all && checkIns.isEmpty ? "Fazer primeiro registro" : nil,
+                    action: evolutionFilter == .all && checkIns.isEmpty
+                        ? { selectedPatientPage = .diary }
+                        : nil
+                )
+            }
+        }
+    }
+
+    var historySectionTitle: String {
+        switch evolutionFilter {
+        case .all: "Histórico recente"
+        case .checkIns: "Check-ins recentes"
+        case .scales: "Escalas recentes"
+        case .alerts: "Alertas recentes"
+        }
+    }
+
+    var historyEmptyMessage: String {
+        if !evolutionQueryNormalized.isEmpty {
+            return "Nenhum registro corresponde a “\(evolutionSearchQuery)”. Limpe a busca ou tente outro termo."
+        }
+        switch evolutionFilter {
+        case .all: return "Seu primeiro check-in vai aparecer aqui. Leva menos de 1 minuto."
+        case .checkIns: return "Nenhum check-in registrado ainda."
+        case .scales: return "Nenhuma escala (PHQ-9, GAD-7, YMRS) respondida ainda."
+        case .alerts: return "Sem alertas pendentes — tudo tranquilo por aqui."
+        }
+    }
+
+    var historyHasAnyVisibleContent: Bool {
+        switch evolutionFilter {
+        case .all:
+            return !filteredCheckIns.isEmpty || !filteredAssessments.isEmpty || !filteredActiveAlerts.isEmpty
+        case .checkIns: return !filteredCheckIns.isEmpty
+        case .scales: return !filteredAssessments.isEmpty
+        case .alerts: return !filteredActiveAlerts.isEmpty
+        }
+    }
+
+    @ViewBuilder
+    var historyCheckInsGroup: some View {
+        if !filteredCheckIns.isEmpty {
+            ForEach(filteredCheckIns.prefix(evolutionFilter == .checkIns ? 20 : 5)) { checkIn in
+                CheckInRow(checkIn: checkIn)
+            }
+        }
+    }
+
+    @ViewBuilder
+    var historyScalesGroup: some View {
+        if !filteredAssessments.isEmpty {
+            ForEach(filteredAssessments.prefix(evolutionFilter == .scales ? 20 : 4)) { assessment in
+                AssessmentRow(assessment: assessment)
+            }
+        }
+    }
+
+    @ViewBuilder
+    var historyAlertsGroup: some View {
+        if !filteredActiveAlerts.isEmpty {
+            ForEach(filteredActiveAlerts.prefix(evolutionFilter == .alerts ? 20 : 3)) { alert in
+                AlertRow(alert: alert) {
+                    alert.acknowledged = true
+                    try? modelContext.save()
+                }
+            }
+        }
+    }
+
+    var recentScalesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "list.clipboard", title: "Resultados recentes")
+
+            if sortedAssessments.isEmpty {
+                EmptyState(text: "Quando você responder PHQ-9, GAD-7 ou YMRS, a evolução das pontuações fica aqui.")
+            } else {
+                ForEach(sortedAssessments.prefix(6)) { assessment in
+                    AssessmentRow(assessment: assessment)
+                }
+            }
+        }
+    }
+
+    var alertsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "bell.badge", title: "Alertas acionáveis")
+
+            if activeAlerts.isEmpty {
+                EmptyState(text: "Tudo tranquilo por aqui. Continue acompanhando — alertas aparecem quando algo merece atenção.")
+            } else {
+                ForEach(activeAlerts) { alert in
+                    AlertRow(alert: alert) {
+                        alert.acknowledged = true
+                        try? modelContext.save()
+                    }
+                }
+            }
+        }
+    }
+
+    var reportSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(icon: "doc.text.magnifyingglass", title: "Relatórios")
+
+            Button(action: generateReport) {
+                Label("Gerar relatório clínico", systemImage: "doc.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(sortedCheckIns.isEmpty && sortedAssessments.isEmpty)
+
+            if !reportPreview.isEmpty {
+                Text(reportPreview)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                ShareLink(item: reportPreview) {
+                    Label("Compartilhar relatório", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                // P1-2: reportStatusMessage migrado para toast central.
+            }
+
+            ForEach(latestReports.prefix(3)) { report in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(report.date, format: Date.FormatStyle(date: .numeric, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("Risco: \(report.riskLevel)")
+                        .font(.headline)
+
+                    Text(report.summary)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                }
+                .panelStyle()
+            }
+        }
+    }
+
+    var canSaveClinicalData: Bool {
+        patients.first?.consentAccepted == true
+    }
+
+    var hasCriticalPHQ9Answer: Bool {
+        selectedScale == .phq9 && selectedScaleAnswers.indices.contains(8) && selectedScaleAnswers[8] > 0
+    }
+
+    var consentBinding: Binding<Bool> {
+        Binding(
+            get: { patients.first?.consentAccepted ?? false },
+            set: { newValue in
+                let patient = ensurePatient()
+                patient.consentAccepted = newValue
+                if !newValue {
+                    patient.shareWithClinician = false
+                }
+            }
+        )
+    }
+
+    var shareWithClinicianBinding: Binding<Bool> {
+        Binding(
+            get: { patients.first?.shareWithClinician ?? false },
+            set: { newValue in
+                let patient = ensurePatient()
+                patient.shareWithClinician = newValue && patient.consentAccepted
+            }
+        )
+    }
+
+    // Sprint A: agora o setter pede confirmação antes de aplicar (toque
+    // acidental no segmented picker antes trocava silenciosamente para perfil
+    // médico e a TabView raiz sumia). Também adicionado `try? modelContext.save()`
+    // que o setter original esquecia — SwiftData auto-save podia não persistir
+    // antes de crash, perdendo a troca.
+    var roleBinding: Binding<AccessRole> {
+        Binding(
+            get: { activeRole },
+            set: { newValue in
+                if newValue != activeRole {
+                    roleChangePending = newValue
+                }
+            }
+        )
+    }
+
+    func applyRoleChange(_ role: AccessRole) {
+        let patient = ensurePatient()
+        patient.activeRole = role.rawValue
+        try? modelContext.save()
+    }
+
+    func prepareInitialData() {
+        // Surface any store-recovery message produced during app init.
+        if let msg = NeuroFlowApp.storeRecoveryMessage {
+            saveStatusMessage = msg
+            NeuroFlowApp.storeRecoveryMessage = nil
+        }
+        _ = ensurePatient()
+        ensureAnswers(for: selectedScale)
+        loadMedicationPlans()
+        loadCustomSymptoms()
+        loadOfflineSyncQueue()
+        startNetworkMonitor()
+        if autoBackupEnabled && backupURL == nil
+            && FileManager.default.fileExists(atPath: BackupStore.protectedFileURL.path) {
+            backupURL = BackupStore.protectedFileURL
+        }
+        runRecurringBackupIfNeeded()
+        retryPendingSync()
+        if loginEmail.isEmpty {
+            loginEmail = authenticatedEmail
+        }
+    }
+
+    func loadMedicationPlans() {
+        guard !medicationPlansData.isEmpty, let data = medicationPlansData.data(using: .utf8) else {
+            return
+        }
+
+        medicationPlans = (try? JSONDecoder().decode([MedicationPlanEntry].self, from: data)) ?? []
+    }
+
+    func persistMedicationPlans() {
+        guard let data = try? JSONEncoder().encode(medicationPlans),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        medicationPlansData = json
+    }
+
+    func addMedicationPlan() {
+        let trimmedName = medicationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        let entry = MedicationPlanEntry(
+            name: trimmedName,
+            dose: medicationDose.trimmingCharacters(in: .whitespacesAndNewlines),
+            schedule: medicationSchedule.trimmingCharacters(in: .whitespacesAndNewlines),
+            prescription: medicationPrescription.trimmingCharacters(in: .whitespacesAndNewlines),
+            changeNote: medicationChangeNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        medicationPlans.insert(entry, at: 0)
+        persistMedicationPlans()
+        medicationName = ""
+        medicationDose = ""
+        medicationSchedule = ""
+        medicationPrescription = ""
+        medicationChangeNote = ""
+    }
+
+    func removeMedicationPlan(_ entry: MedicationPlanEntry) {
+        medicationPlans.removeAll { $0.id == entry.id }
+        persistMedicationPlans()
+    }
+
+    func loadCustomSymptoms() {
+        guard !customSymptomsData.isEmpty, let data = customSymptomsData.data(using: .utf8) else {
+            return
+        }
+
+        customSymptoms = (try? JSONDecoder().decode([CustomSymptomEntry].self, from: data)) ?? []
+    }
+
+    func persistCustomSymptoms() {
+        guard let data = try? JSONEncoder().encode(customSymptoms),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        customSymptomsData = json
+    }
+
+    func addCustomSymptom() {
+        let trimmedName = customSymptomName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        customSymptoms.insert(CustomSymptomEntry(name: trimmedName, value: customSymptomValue), at: 0)
+        persistCustomSymptoms()
+        customSymptomName = ""
+        customSymptomValue = 3
+    }
+
+    func removeCustomSymptom(_ entry: CustomSymptomEntry) {
+        customSymptoms.removeAll { $0.id == entry.id }
+        persistCustomSymptoms()
+    }
+
+    // N-I2: start a persistent NWPathMonitor that flushes the offline sync
+    // queue whenever the network path becomes satisfied. Cancels any previous
+    // monitor to avoid double-firing on hot reloads.
+    func startNetworkMonitor() {
+        networkMonitor.cancel()
+        networkMonitor = NWPathMonitor()
+        networkMonitor.pathUpdateHandler = { [self] path in
+            guard path.status == .satisfied else { return }
+            DispatchQueue.main.async { retryPendingSync() }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+    }
+
+    func loadOfflineSyncQueue() {
+        guard !offlineSyncQueueData.isEmpty, let data = offlineSyncQueueData.data(using: .utf8) else {
+            return
+        }
+
+        offlineSyncQueue = (try? JSONDecoder().decode([OfflineSyncItem].self, from: data)) ?? []
+    }
+
+    func persistOfflineSyncQueue() {
+        guard let data = try? JSONEncoder().encode(offlineSyncQueue),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        offlineSyncQueueData = json
+    }
+
+    @discardableResult
+    func ensurePatient() -> PatientProfile {
+        if let patient = patients.first {
+            return patient
+        }
+
+        let patient = PatientProfile()
+        modelContext.insert(patient)
+        return patient
+    }
+
+    func ensureAnswers(for scale: ScaleKind) {
+        if scaleAnswers[scale]?.count != scale.questions.count {
+            scaleAnswers[scale] = Array(repeating: 0, count: scale.questions.count)
+        }
+    }
+
+    func answerBinding(for scale: ScaleKind, index: Int) -> Binding<Int> {
+        Binding(
+            get: {
+                scaleAnswers[scale, default: Array(repeating: 0, count: scale.questions.count)][index]
+            },
+            set: { newValue in
+                ensureAnswers(for: scale)
+                scaleAnswers[scale]?[index] = newValue
+            }
+        )
+    }
+
+    // P1-2 (UX): ponto único de exibição de feedback ao usuário.
+    // Substitui as 9+ variáveis de status espalhadas por chamadas a esta
+    // função. Erros não fazem auto-dismiss; confirmações somem em 2 s;
+    // avisos somem em 4 s.
+    func showToast(_ message: String, level: ToastLevel = .success) {
+        toastTask?.cancel()
+        toastMessage = message
+        toastLevel = level
+        if let delay = level.autoDismissSeconds {
+            toastTask = Task {
+                try? await Task.sleep(for: .seconds(delay))
+                if !Task.isCancelled {
+                    toastMessage = ""
+                }
+            }
+        }
+    }
+
+    /// View que renderiza o toast sobre o conteúdo principal.
+    @ViewBuilder
+    var toastOverlay: some View {
+        if !toastMessage.isEmpty {
+            VStack {
+                Spacer()
+                HStack(spacing: 10) {
+                    Image(systemName: toastLevel.icon)
+                        .foregroundStyle(.white)
+                    Text(toastMessage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if toastLevel == .error {
+                        Button {
+                            toastMessage = ""
+                        } label: {
+                            Image(systemName: "xmark")
+                                .foregroundStyle(.white.opacity(0.8))
+                                .font(.caption.weight(.bold))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(toastLevel.color, in: RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 100) // acima da TabBar
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: toastMessage)
+            .zIndex(999)
+            .accessibilityLabel(toastMessage)
+        }
+    }
+
+    func saveDailyCheckIn() {
+        // Sprint A (NEW-2): debounce contra double-tap. M5 colocou
+        // @Attribute(.unique) dayKey em DailyCheckIn — duas execuções
+        // simultâneas com mesmo dayKey quebram o SwiftData store no save.
+        // O upsert abaixo verifica `checkIns.first(where:)`, mas as duas
+        // execuções podem ler dayKey ausente, ambas inserir e estourar a
+        // unique constraint no `try modelContext.save()`.
+        guard !isSavingCheckIn else { return }
+        isSavingCheckIn = true
+        defer { isSavingCheckIn = false }
+
+        saveStatusMessage = ""
+
+        let todayKey = DailyCheckIn.dayKey(for: Date())
+        let checkIn: DailyCheckIn
+        if let existing = checkIns.first(where: { $0.dayKey == todayKey }) {
+            // Upsert: overwrite today's record rather than creating a duplicate.
+            checkIn = existing
+        } else {
+            checkIn = DailyCheckIn(
+                mood: mood, anxiety: anxiety, energy: energy,
+                irritability: irritability, sleepHours: sleepHours,
+                appetite: appetite, libido: libido,
+                medicationTaken: isMedicationFullyTaken,
+                sideEffects: sideEffects, automaticThoughts: automaticThoughts,
+                suicidalIdeation: hasCriticalSafetyRisk,
+                journalEntry: journalEntryWithContext
+            )
+            modelContext.insert(checkIn)
+        }
+        checkIn.date = Date()
+        checkIn.mood = mood
+        checkIn.anxiety = anxiety
+        checkIn.energy = energy
+        checkIn.irritability = irritability
+        checkIn.sleepHours = sleepHours
+        checkIn.appetite = appetite
+        checkIn.libido = libido
+        checkIn.medicationTaken = isMedicationFullyTaken
+        checkIn.sideEffects = sideEffects
+        checkIn.automaticThoughts = automaticThoughts
+        checkIn.suicidalIdeation = hasCriticalSafetyRisk
+        checkIn.journalEntry = journalEntryWithContext
+        let backendPayload = BackendDailyCheckInPayload(
+            mood: mood,
+            anxiety: anxiety,
+            energy: energy,
+            irritability: irritability,
+            sleepHours: sleepHours,
+            appetite: appetite,
+            libido: libido,
+            medicationTaken: isMedicationFullyTaken,
+            sideEffects: sideEffects,
+            automaticThoughts: automaticThoughts,
+            suicidalIdeation: hasCriticalSafetyRisk,
+            journalEntry: journalEntryWithContext
+        )
+
+        let textAssessment = hasCriticalSafetyRisk
+            ? TextRiskAssessment(level: .high, detectedTerms: ["triagem positiva"], explanation: "A triagem estruturada marcou ideação suicida.")
+            : ClinicalAnalysis.textAssessment(for: "\(journalEntryWithContext) \(automaticThoughts)")
+        if textAssessment.level != .low || mood <= 2 || anxiety >= 3.5 || !isMedicationFullyTaken {
+            let alertLevel: ClinicalRiskLevel = textAssessment.level == .low ? .moderate : textAssessment.level
+            modelContext.insert(ClinicalAlert(level: alertLevel, title: alertLevel.alertTitle, message: "\(textAssessment.explanation) \(textAssessment.recommendation)"))
+        }
+
+        // Sprint A — fluxo de crise (NEW-1): capturar AGORA os flags que
+        // dependem do estado pré-reset. Antes:
+        //   1. `journalEntry = ""` rodava em (linha do reset), aí logo abaixo
+        //      `if journalEntry.trim.isEmpty` era SEMPRE true → postSaveSheet
+        //      disparava sempre, inclusive em crise.
+        //   2. `safetyStatus = .safe` resetava antes do paciente ver feedback
+        //      de que a equipe foi acionada — `CrisisSupportCard` sumia.
+        let wasUrgent = (safetyStatus == .urgent) || hasCriticalSafetyRisk
+        let hadEmptyJournal = journalEntry
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        do {
+            try modelContext.save()
+            sideEffects = ""
+            automaticThoughts = ""
+            journalEntry = ""
+            alcoholTrigger = false
+            poorSleepTrigger = false
+            stressTrigger = false
+            conflictTrigger = false
+            routineChangeTrigger = false
+            menstrualTrigger = false
+            customTriggers = []
+            // Em crise: NÃO resetar safetyStatus (mantém CrisisSupportCard
+            // visível) e dar feedback explícito de que a equipe foi alertada.
+            if wasUrgent {
+                saveStatusMessage = "Registro salvo e equipe de cuidado alertada. Continue acompanhando o plano de segurança abaixo."
+            } else {
+                safetyStatus = .safe
+                saveStatusMessage = "Registro diário salvo no histórico."
+            }
+            hasSeenMoodCoachmark = true
+            // Sprint 23 + Sprint A: só dispara o sheet de "anotação leve" se
+            // o paciente NÃO estava em crise (essa UI seria deslocada) e se o
+            // journal estava vazio ANTES do reset desta sessão de save.
+            if !wasUrgent && hadEmptyJournal {
+                postSaveThought = ""
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    isShowingPostSavePrompt = true
+                }
+            }
+            syncCheckInWithBackend(backendPayload)
+            if autoBackupEnabled {
+                makeBackupExport(silent: true)
+            }
+            if autoMonthlyReportEnabled {
+                prepareReportPreviewOnly()
+                reportStatusMessage = "Relatório mensal atualizado."
+                if autoCareTeamSendEnabled {
+                    sendCurrentReportToCareTeam()
+                }
+            }
+        } catch {
+            saveStatusMessage = "Não foi possível salvar o registro."
+        }
+    }
+
+    func saveAutomaticCheckups() {
+        scaleStatusMessage = ""
+        let results = automaticCheckupResults
+
+        for result in results {
+            modelContext.insert(ScaleAssessment(
+                scaleName: result.scale.rawValue,
+                answers: result.answers,
+                score: result.score,
+                interpretation: result.interpretation
+            ))
+
+            if result.scale == .phq9 && result.answers.indices.contains(8) && result.answers[8] > 0 {
+                modelContext.insert(ClinicalAlert(level: .high, title: "Check-up automático com item crítico", message: "Sinal de segurança alto. Revisar plano de apoio e contato profissional."))
+            } else if scoreRequiresAlert(scale: result.scale, score: result.score) {
+                modelContext.insert(ClinicalAlert(level: .moderate, title: "Check-up automático alterado", message: "\(result.scale.rawValue): \(result.score) pontos, interpretação \(result.interpretation)."))
+            }
+        }
+
+        do {
+            try modelContext.save()
+            scaleStatusMessage = "Check-up automático salvo com base no diário de hoje."
+            for result in results {
+                syncAssessmentWithBackend(
+                    scaleName: result.scale.rawValue,
+                    answers: result.answers,
+                    score: result.score,
+                    interpretation: result.interpretation
+                )
+            }
+        } catch {
+            scaleStatusMessage = "Não foi possível salvar o check-up automático."
+        }
+    }
+
+    func automaticAnswers(for scale: ScaleKind) -> [Int] {
+        switch scale {
+        case .phq9:
+            return [
+                lowMoodSeverity,
+                max(lowMoodSeverity, textSeverity),
+                sleepSeverity,
+                lowEnergySeverity,
+                appetiteSeverity,
+                textSeverity,
+                automaticThoughts.isEmpty ? 0 : max(1, anxietySeverity - 1),
+                max(lowEnergySeverity, irritabilitySeverity),
+                safetySeverity
+            ]
+        case .gad7:
+            return [
+                anxietySeverity,
+                automaticThoughts.isEmpty ? max(0, anxietySeverity - 1) : max(1, anxietySeverity),
+                max(anxietySeverity, stressTrigger ? 2 : 0),
+                max(anxietySeverity - 1, sleepSeverity),
+                max(irritabilitySeverity, energy >= 4 ? 1 : 0),
+                irritabilitySeverity,
+                max(textSeverity, safetyStatus == .attention ? 1 : 0)
+            ].map { clamped($0, range: 0...3) }
+        case .ymrs:
+            return [
+                mood >= 4 ? Int(mood - 3) : 0,
+                energy >= 4 ? Int(energy - 2) : 0,
+                libido >= 4 ? Int(libido - 3) : 0,
+                sleepHours < 5 ? 4 : sleepHours < 6 ? 3 : sleepHours < 7 ? 1 : 0,
+                clamped(irritabilitySeverity * 2, range: 0...8),
+                energy >= 5 ? 4 : energy >= 4 ? 2 : 0,
+                automaticThoughts.count > 120 ? 3 : automaticThoughts.isEmpty ? 0 : 1,
+                clamped(max(textSeverity, safetySeverity) * 2, range: 0...8),
+                clamped(irritabilitySeverity * 2, range: 0...8),
+                0,
+                safetyStatus == .urgent ? 2 : safetyStatus == .attention ? 1 : 0
+            ]
+        }
+    }
+
+    var lowMoodSeverity: Int {
+        clamped(Int(((5 - mood) / 4 * 3).rounded()), range: 0...3)
+    }
+
+    var anxietySeverity: Int {
+        clamped(Int(((anxiety - 1) / 4 * 3).rounded()), range: 0...3)
+    }
+
+    var lowEnergySeverity: Int {
+        clamped(Int(((5 - energy) / 4 * 3).rounded()), range: 0...3)
+    }
+
+    var irritabilitySeverity: Int {
+        clamped(Int(((irritability - 1) / 4 * 3).rounded()), range: 0...3)
+    }
+
+    var sleepSeverity: Int {
+        if sleepHours < 5 { return 3 }
+        if sleepHours < 6 { return 2 }
+        if sleepHours < 7 || sleepHours > 9 { return 1 }
+        return 0
+    }
+
+    var appetiteSeverity: Int {
+        let distance = abs(appetite - 3)
+        if distance >= 2 { return 3 }
+        if distance >= 1 { return 1 }
+        return 0
+    }
+
+    var safetySeverity: Int {
+        switch safetyStatus {
+        case .safe:
+            0
+        case .attention:
+            1
+        case .urgent:
+            3
+        }
+    }
+
+    var textSeverity: Int {
+        switch currentTextAssessment.level {
+        case .low:
+            0
+        case .moderate:
+            2
+        case .high:
+            3
+        }
+    }
+
+    func clamped(_ value: Int, range: ClosedRange<Int>) -> Int {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+
+    func saveScaleAssessment() {
+        scaleStatusMessage = ""
+        ensureAnswers(for: selectedScale)
+        let answers = scaleAnswers[selectedScale] ?? []
+        let score = ClinicalAnalysis.score(for: selectedScale, answers: answers)
+        let interpretation = ClinicalAnalysis.interpretation(for: selectedScale, score: score)
+        modelContext.insert(ScaleAssessment(scaleName: selectedScale.rawValue, answers: answers, score: score, interpretation: interpretation))
+
+        if selectedScale == .phq9 && answers.indices.contains(8) && answers[8] > 0 {
+            modelContext.insert(ClinicalAlert(level: .high, title: "PHQ-9 com item crítico", message: "Item 9 positivo. Revisar risco suicida e plano de segurança imediatamente."))
+        } else if scoreRequiresAlert(scale: selectedScale, score: score) {
+            modelContext.insert(ClinicalAlert(level: .moderate, title: "Escala alterada", message: "\(selectedScale.rawValue): \(score) pontos, interpretação \(interpretation)."))
+        }
+
+        do {
+            try modelContext.save()
+            scaleAnswers[selectedScale] = Array(repeating: 0, count: selectedScale.questions.count)
+            scaleStatusMessage = "\(selectedScale.rawValue) salvo: \(score) pontos, \(interpretation)."
+            syncAssessmentWithBackend(scaleName: selectedScale.rawValue, answers: answers, score: score, interpretation: interpretation)
+        } catch {
+            scaleStatusMessage = "Não foi possível salvar \(selectedScale.rawValue)."
+        }
+    }
+
+    func scoreRequiresAlert(scale: ScaleKind, score: Int) -> Bool {
+        switch scale {
+        case .phq9:
+            score >= 10
+        case .gad7:
+            score >= 10
+        case .ymrs:
+            score >= 13
+        }
+    }
+
+    func updateTypingSignals(text: String) {
+        bodySignalInteractionCount += 1
+        if typingStartedAt == nil && !text.isEmpty {
+            typingStartedAt = Date()
+            bodySignalTypingLatency = Date().timeIntervalSince(appSessionStartedAt)
+        }
+
+        guard let typingStartedAt else { return }
+        let elapsedMinutes = max(Date().timeIntervalSince(typingStartedAt) / 60, 0.05)
+        bodySignalTypingSpeed = Double(text.count) / elapsedMinutes
+    }
+
+    func generateReport() {
+        let text = ClinicalAnalysis.reportText(checkIns: sortedCheckIns, assessments: sortedAssessments)
+        reportPreview = text
+        reportPDFURL = makePDFReport(text: text)
+        reportCSVURL = makeCSVReport()
+        let coveredCheckIns = sortedCheckIns.prefix(14)
+        modelContext.insert(ClinicalReport(
+            summary: text,
+            riskLevel: summary.riskLevel,
+            clinicianName: patients.first?.clinicianName ?? "",
+            periodStart: coveredCheckIns.last?.date ?? Date(),
+            periodEnd: coveredCheckIns.first?.date ?? Date(),
+            scalesIncluded: Array(Set(sortedAssessments.prefix(10).map(\.scaleName))).sorted(),
+            algorithmVersion: "2.0"
+        ))
+        reportStatusMessage = ""
+
+        do {
+            try modelContext.save()
+            syncReportWithBackend(summary: text, riskLevel: summary.riskLevel.rawValue)
+            if autoCareTeamSendEnabled {
+                sendCurrentReportToCareTeam()
+            }
+        } catch {
+            reportStatusMessage = "Relatório gerado, mas não foi possível salvar localmente."
+        }
+    }
+
+    func prepareReportPreviewOnly() {
+        let text = ClinicalAnalysis.reportText(checkIns: sortedCheckIns, assessments: sortedAssessments)
+        reportPreview = text
+        reportPDFURL = makePDFReport(text: text)
+        reportCSVURL = makeCSVReport()
+    }
+
+    /// Encrypt a PHI string field for the backup JSON.
+    /// Returns the base-64 AES-GCM ciphertext, or an empty string on failure
+    /// (never falls back to plaintext — dropping is safer).
+    func encryptField(_ value: String) -> String {
+        DraftStore.encryptString(value) ?? ""
+    }
+
+
+}
