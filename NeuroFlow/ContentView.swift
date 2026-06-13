@@ -45,7 +45,7 @@ struct CustomSymptomEntry: Identifiable, Codable, Equatable {
     var createdAt = Date()
 }
 
-private extension Array where Element == BackendUser {
+extension Array where Element == BackendUser {
     var sortedByRisk: [BackendUser] {
         sorted { first, second in
             (first.riskScore ?? -1) > (second.riskScore ?? -1)
@@ -68,7 +68,7 @@ struct OfflineSyncItem: Identifiable, Codable, Equatable {
 }
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.modelContext) var modelContext
     @Query var patients: [PatientProfile]
     @Query var checkIns: [DailyCheckIn]
     @Query var assessments: [ScaleAssessment]
@@ -85,21 +85,21 @@ struct ContentView: View {
     // with the symmetric key kept in the Keychain. Sprint 12 had them in
     // plaintext @AppStorage, which leaked PHI through iCloud Backup of the
     // standard plist (Sprint 16 / F13' / S15).
-    @EncryptedDraft("neuroflowDraftMood", defaultValue: 3.0) private var mood
-    @EncryptedDraft("neuroflowDraftAnxiety", defaultValue: 2.0) private var anxiety
-    @EncryptedDraft("neuroflowDraftEnergy", defaultValue: 3.0) private var energy
-    @EncryptedDraft("neuroflowDraftIrritability", defaultValue: 1.0) private var irritability
-    @EncryptedDraft("neuroflowDraftSleepHours", defaultValue: 7.0) private var sleepHours
-    @EncryptedDraft("neuroflowDraftAppetite", defaultValue: 3.0) private var appetite
+    @EncryptedDraft("neuroflowDraftMood", defaultValue: 3.0) var mood
+    @EncryptedDraft("neuroflowDraftAnxiety", defaultValue: 2.0) var anxiety
+    @EncryptedDraft("neuroflowDraftEnergy", defaultValue: 3.0) var energy
+    @EncryptedDraft("neuroflowDraftIrritability", defaultValue: 1.0) var irritability
+    @EncryptedDraft("neuroflowDraftSleepHours", defaultValue: 7.0) var sleepHours
+    @EncryptedDraft("neuroflowDraftAppetite", defaultValue: 3.0) var appetite
     // P2-7: default 0.0 = "Não se aplica" para evitar ruído com valor médio.
-    @EncryptedDraft("neuroflowDraftLibido", defaultValue: 0.0) private var libido
+    @EncryptedDraft("neuroflowDraftLibido", defaultValue: 0.0) var libido
     @State var medicationStatus = MedicationStatus.taken
     @State var safetyStatus = SafetyStatus.safe
     // Same DraftStore encryption applies to the free-text fields, which are
     // the most sensitive of the bunch (Sprint 16 / F13' / S15).
-    @EncryptedDraft("neuroflowDraftSideEffects", defaultValue: "") private var sideEffects
-    @EncryptedDraft("neuroflowDraftAutomaticThoughts", defaultValue: "") private var automaticThoughts
-    @EncryptedDraft("neuroflowDraftJournalEntry", defaultValue: "") private var journalEntry
+    @EncryptedDraft("neuroflowDraftSideEffects", defaultValue: "") var sideEffects
+    @EncryptedDraft("neuroflowDraftAutomaticThoughts", defaultValue: "") var automaticThoughts
+    @EncryptedDraft("neuroflowDraftJournalEntry", defaultValue: "") var journalEntry
     @State var selectedCareFocus = CareFocus.bipolar
     @State var alcoholTrigger = false
     @State var poorSleepTrigger = false
@@ -127,9 +127,12 @@ struct ContentView: View {
     @State var selectedPatientPage = PatientPage.diary
     // M2 (UX-P0): seções recolhíveis do diário — reduz carga cognitiva
     // para pacientes com pouca energia. Todas abertas por padrão.
-    @State var diarySection1Expanded = true  // "Como você está?"
-    @State var diarySection2Expanded = true  // "Segurança e medicação"
-    @State var diarySection3Expanded = true  // "Texto livre e gatilhos"
+    @State var diarySection1Expanded = true   // "Como você está?" — aberta por padrão (fluxo mínimo)
+    @State var diarySection2Expanded = false  // "Segurança e medicação" — fechada; expande quando necessário
+    @State var diarySection3Expanded = false  // "Texto livre e gatilhos" — fechada; expande quando necessário
+    // Check-in progressivo: os 4 campos secundários (Energia, Irritabilidade,
+    // Apetite, Libido) ficam ocultos até o paciente querer detalhar mais.
+    @State var diarySection1DetailsExpanded = false
     // M5 (UX-P0): aba ativa no TabView do clínico
     @State var clinicianTab: ClinicianTab = .patients
     // Sprint A: confirmação antes de aplicar troca de perfil de acesso.
@@ -171,7 +174,6 @@ struct ContentView: View {
     @State var medicationPlans: [MedicationPlanEntry] = []
     @State var customSymptoms: [CustomSymptomEntry] = []
     @State var offlineSyncQueue: [OfflineSyncItem] = []
-    // N-I2: watch network path changes and automatically flush the offline
     // queue when connectivity is restored without requiring user interaction.
     @State var networkMonitor = NWPathMonitor()
     @State var networkMonitorQueue = DispatchQueue(label: "io.neuroflow.networkMonitor", qos: .background)
@@ -180,64 +182,71 @@ struct ContentView: View {
     @State var bodySignalTypingSpeed = 0.0
     @State var bodySignalInteractionCount = 0
     @State var appSessionStartedAt = Date()
-    @KeychainStored(.authToken) private var authToken
-    @KeychainStored(.refreshToken) private var refreshToken
-    // N-I4: email and name are PII — Keychain instead of UserDefaults plaintext.
+    // B2 — debounce token; cancels the previous pending call before scheduling a new one.
+    @State var _typingDebounceTask: Task<Void, Never>?
+    @KeychainStored(.authToken) var authToken
+    @KeychainStored(.refreshToken) var refreshToken
     // Legacy @AppStorage values are auto-migrated on first launch by
     // KeychainStore.migrateLegacyTokenIfNeeded() (called in AppDelegate).
-    @KeychainStored(.userEmail) private var authenticatedEmail
-    @KeychainStored(.userName) private var authenticatedName
-    @KeychainStored(.userRole) private var authenticatedRole
-    @AppStorage("neuroflowUserId") private var authenticatedUserId = 0
-    @AppStorage("neuroflowMedicationReminderEnabled") private var medicationReminderEnabled = false
-    @AppStorage("neuroflowCheckInReminderEnabled") private var checkInReminderEnabled = false
-    @AppStorage("neuroflowMedicationReminderHour") private var medicationReminderHour = 9
-    @AppStorage("neuroflowCheckInReminderHour") private var checkInReminderHour = 20
+    @KeychainStored(.userEmail) var authenticatedEmail
+    @KeychainStored(.userName) var authenticatedName
+    @KeychainStored(.userRole) var authenticatedRole
+    @KeychainStored(.userId) var _authenticatedUserIdStr
+    var authenticatedUserId: Int {
+        get { Int(_authenticatedUserIdStr) ?? 0 }
+        nonmutating set { _authenticatedUserIdStr = "\(newValue)" }
+    }
+    @AppStorage("neuroflowMedicationReminderEnabled") var medicationReminderEnabled = false
+    @AppStorage("neuroflowCheckInReminderEnabled") var checkInReminderEnabled = false
+    @AppStorage("neuroflowMedicationReminderHour") var medicationReminderHour = 9
+    @AppStorage("neuroflowCheckInReminderHour") var checkInReminderHour = 20
     // PHI: medication fields are encrypted at rest via AES-GCM (DraftStore).
     // Legacy @AppStorage values are auto-migrated on first read.
-    @EncryptedDraft("neuroflowMedicationName", defaultValue: "") private var medicationName
-    @EncryptedDraft("neuroflowMedicationDose", defaultValue: "") private var medicationDose
-    @EncryptedDraft("neuroflowMedicationSchedule", defaultValue: "") private var medicationSchedule
-    @EncryptedDraft("neuroflowMedicationChangeNote", defaultValue: "") private var medicationChangeNote
-    @EncryptedDraft("neuroflowMedicationPrescription", defaultValue: "") private var medicationPrescription
-    @EncryptedDraft("neuroflowMedicationPlansData", defaultValue: "") private var medicationPlansData
-    @AppStorage("neuroflowCustomSymptomName") private var customSymptomName = ""
-    @AppStorage("neuroflowCustomSymptomValue") private var customSymptomValue = 3.0
-    @AppStorage("neuroflowCustomSymptomsData") private var customSymptomsData = ""
-    @EncryptedDraft("neuroflowSafetyContact", defaultValue: "") private var safetyContact
-    @EncryptedDraft("neuroflowSafetyWarningSigns", defaultValue: "") private var safetyWarningSigns
-    @EncryptedDraft("neuroflowSafetyStrategies", defaultValue: "") private var safetyStrategies
-    @AppStorage("neuroflowNextAppointmentAt") private var nextAppointmentAt = Date().addingTimeInterval(60 * 60 * 24 * 30).timeIntervalSince1970
-    @AppStorage("neuroflowNextAppointmentNote") private var nextAppointmentNote = ""
-    @AppStorage("neuroflowAutoMonthlyReportEnabled") private var autoMonthlyReportEnabled = false
-    @AppStorage("neuroflowAutoBackupEnabled") private var autoBackupEnabled = true
-    @AppStorage("neuroflowBackupIntervalDays") private var backupIntervalDays = 7
-    @AppStorage("neuroflowLastAutomaticBackupAt") private var lastAutomaticBackupAt = 0.0
-    @AppStorage("neuroflowAutoCareTeamSendEnabled") private var autoCareTeamSendEnabled = false
-    @AppStorage("neuroflowCareTeamContact") private var careTeamContact = ""
-    @AppStorage("neuroflowCareTeamSendStatus") private var careTeamSendStatus = "Envio automático inativo"
-    @AppStorage("neuroflowShareWithCaregiver") private var shareWithCaregiver = false
-    @AppStorage("neuroflowHealthKitEnabled") private var healthKitEnabled = false
-    @AppStorage("neuroflowHealthKitStatus") private var healthKitStatus = "Apple Health não conectado"
-    @AppStorage("neuroflowHealthSteps") private var healthSteps = 0
-    @AppStorage("neuroflowHealthSleepHours") private var healthSleepHours = 0.0
-    @AppStorage("neuroflowHealthHeartRate") private var healthHeartRate = 0.0
-    @AppStorage("neuroflowHealthActiveEnergy") private var healthActiveEnergy = 0.0
-    @AppStorage("neuroflowRemotePushEnabled") private var remotePushEnabled = false
-    @AppStorage("neuroflowRemotePushStatus") private var remotePushStatus = "Push remoto não configurado"
-    @KeychainStored(.apnsDeviceToken) private var apnsDeviceToken
-    @AppStorage("neuroflowBackgroundBackupStatus") private var backgroundBackupStatus = "Backup em segundo plano não agendado"
+    @EncryptedDraft("neuroflowMedicationName", defaultValue: "") var medicationName
+    @EncryptedDraft("neuroflowMedicationDose", defaultValue: "") var medicationDose
+    @EncryptedDraft("neuroflowMedicationSchedule", defaultValue: "") var medicationSchedule
+    @EncryptedDraft("neuroflowMedicationChangeNote", defaultValue: "") var medicationChangeNote
+    @EncryptedDraft("neuroflowMedicationPrescription", defaultValue: "") var medicationPrescription
+    @EncryptedDraft("neuroflowMedicationPlansData", defaultValue: "") var medicationPlansData
+    @AppStorage("neuroflowCustomSymptomName") var customSymptomName = ""
+    @AppStorage("neuroflowCustomSymptomValue") var customSymptomValue = 3.0
+    @AppStorage("neuroflowCustomSymptomsData") var customSymptomsData = ""
+    @EncryptedDraft("neuroflowSafetyContact", defaultValue: "") var safetyContact
+    @EncryptedDraft("neuroflowSafetyWarningSigns", defaultValue: "") var safetyWarningSigns
+    @EncryptedDraft("neuroflowSafetyStrategies", defaultValue: "") var safetyStrategies
+    @AppStorage("neuroflowNextAppointmentAt") var nextAppointmentAt = Date().addingTimeInterval(60 * 60 * 24 * 30).timeIntervalSince1970
+    @AppStorage("neuroflowNextAppointmentNote") var nextAppointmentNote = ""
+    @AppStorage("neuroflowAutoMonthlyReportEnabled") var autoMonthlyReportEnabled = false
+    @AppStorage("neuroflowAutoBackupEnabled") var autoBackupEnabled = true
+    @AppStorage("neuroflowBackupIntervalDays") var backupIntervalDays = 7
+    @AppStorage("neuroflowLastAutomaticBackupAt") var lastAutomaticBackupAt = 0.0
+    @AppStorage("neuroflowAutoCareTeamSendEnabled") var autoCareTeamSendEnabled = false
+    @AppStorage("neuroflowCareTeamContact") var careTeamContact = ""
+    @AppStorage("neuroflowCareTeamSendStatus") var careTeamSendStatus = "Envio automático inativo"
+    @AppStorage("neuroflowShareWithCaregiver") var shareWithCaregiver = false
+    @AppStorage("neuroflowHealthKitEnabled") var healthKitEnabled = false
+    @AppStorage("neuroflowHealthKitStatus") var healthKitStatus = "Apple Health não conectado"
+    @AppStorage("neuroflowHealthSteps") var healthSteps = 0
+    @AppStorage("neuroflowHealthSleepHours") var healthSleepHours = 0.0
+    @AppStorage("neuroflowHealthHeartRate") var healthHeartRate = 0.0
+    @AppStorage("neuroflowHealthActiveEnergy") var healthActiveEnergy = 0.0
+    @AppStorage("neuroflowRemotePushEnabled") var remotePushEnabled = false
+    @AppStorage("neuroflowRemotePushStatus") var remotePushStatus = "Push remoto não configurado"
+    @KeychainStored(.apnsDeviceToken) var apnsDeviceToken
+    @AppStorage("neuroflowBackgroundBackupStatus") var backgroundBackupStatus = "Backup em segundo plano não agendado"
     // lastBackupJSON was removed (S15/C1): PHI must not live in UserDefaults.
     // The backup file is written directly to BackupStore.protectedFileURL.
-    @AppStorage("neuroflowOfflineSyncQueueData") private var offlineSyncQueueData = ""
-    @AppStorage("neuroflowLastSyncStatus") private var lastSyncStatus = "Salvo no aparelho"
-    @AppStorage("neuroflowBiometricConsentAccepted") private var biometricConsentAccepted = false
-    @AppStorage("neuroflowPrivacyRetentionDays") private var privacyRetentionDays = 365
+    @AppStorage("neuroflowOfflineSyncQueueData") var offlineSyncQueueData = ""
+    @AppStorage("neuroflowLastSyncStatus") var lastSyncStatus = "Salvo no aparelho"
+    @AppStorage("neuroflowBiometricConsentAccepted") var biometricConsentAccepted = false
+    @AppStorage("neuroflowPrivacyRetentionDays") var privacyRetentionDays = 365
     @State var privacyStatusMessage = ""
     @State var privacyExportURL: URL?
     @State var isConfirmingClinicalWipe = false
     @State var isConfirmingAccountDelete = false
     @State var isShowingAuditLogs = false
+    @State var isShowingTermsOfUse = false
+    @State var isShowingPrivacyPolicy = false
     @State var remoteAuditLogs: [BackendAuditLog] = []
     @State var caregiverEditTarget: BackendCaregiverContact?
     @State var caregiverStatusMessage = ""
@@ -254,15 +263,23 @@ struct ContentView: View {
     @State var isShowingSessionExpiredAlert = false
     @State var isShowingPasswordResetConfirm = false
     @State var isShowingCrisisSheet = false
+    @State var crisisSheetTab = 0
     @State var isShowingLoginSheet = false
     @State var isShowingPostSavePrompt = false
     @State var postSaveThought = ""
-    @AppStorage("neuroflowOnboardingComplete") private var hasCompletedOnboarding = false
-    @AppStorage("neuroflowMoodCoachmarkSeen") private var hasSeenMoodCoachmark = false
+    @AppStorage("neuroflowOnboardingComplete") var hasCompletedOnboarding = false
+    @AppStorage("neuroflowMoodCoachmarkSeen") var hasSeenMoodCoachmark = false
     @State var onboardingStep = 0
+    /// Version string of the last legal document the user accepted.
+    /// Empty = never accepted. Compared against LegalVersion.current to
+    /// detect policy updates that require re-acceptance (LGPD Art. 7 I).
+    @AppStorage("neuroflowLegalAcceptedVersion") var legalAcceptedVersion = ""
+    /// True when the legal consent gate should be shown (first launch or
+    /// after a policy update).
+    var needsLegalAcceptance: Bool { legalAcceptedVersion != LegalVersion.current }
     /// Timestamp (timeIntervalSince1970) até quando o banner de convite fica
     /// escondido. Zero quando nunca foi adiado.
-    @AppStorage("neuroflowInviteSnoozedUntil") private var inviteSnoozedUntil = 0.0
+    @AppStorage("neuroflowInviteSnoozedUntil") var inviteSnoozedUntil = 0.0
     @State var passwordResetCode = ""
     @State var passwordResetNewPassword = ""
     @State var passwordResetStatusMessage = ""
@@ -270,11 +287,11 @@ struct ContentView: View {
     @State var linkedClinicians: [BackendLinkedClinician] = []
     @State var linkedCliniciansStatusMessage = ""
     @State var clinicianToRevoke: BackendLinkedClinician?
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.scenePhase) var scenePhase
     @State var isPrivacyShielded = false
 
     #if canImport(HealthKit)
-    private let healthStore = HKHealthStore()
+    let healthStore = HKHealthStore()
     #endif
 
     // Sprint E #4: leitura cache-first. Fallback (recomputa) só roda no primeiro
@@ -406,7 +423,7 @@ struct ContentView: View {
             activeTriggers: activeTriggerLabels,
             textAssessment: currentTextAssessment,
             ppgStress: ppgManager.stress,
-            ppgQuality: ppgManager.signalQuality,
+            ppgQuality: ppgManager.isHeartRatePhysiologicallyValid ? ppgManager.signalQuality : 0,
             voicePauseRatio: voiceManager.pauseRatio,
             typingSpeed: bodySignalTypingSpeed,
             careFocus: selectedCareFocus
@@ -520,6 +537,17 @@ struct ContentView: View {
 
     var body: some View {
         rootWithLifecycle
+            // Legal consent gate — shown before anything else on first launch
+            // or after a policy update. interactiveDismissDisabled is set
+            // inside LegalConsentView so the user cannot swipe it away.
+            .fullScreenCover(isPresented: Binding(
+                get: { needsLegalAcceptance },
+                set: { _ in }
+            )) {
+                LegalConsentView {
+                    legalAcceptedVersion = LegalVersion.current
+                }
+            }
             .fullScreenCover(isPresented: shouldShowOnboardingBinding) {
                 onboardingFlow
             }
@@ -619,7 +647,8 @@ struct ContentView: View {
                         ToolbarItem(placement: .topBarLeading) {
                             Button {
                                 isShowingSettings = false
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(350))
                                     isShowingCrisisSheet = true
                                 }
                             } label: {
@@ -667,14 +696,41 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $isShowingCrisisSheet) {
+                // S8 (UX): folha de crise unifica leitura do plano e edição.
+                // Antes o usuário precisava fechar o SOS, navegar para
+                // Ferramentas e encontrar o editor — carga alta exatamente
+                // quando a carga cognitiva precisa ser mínima.
                 NavigationStack {
-                    ScrollView {
-                        CrisisSupportCard(
-                            safetyContact: safetyContact,
-                            warningSigns: safetyWarningSigns,
-                            strategies: safetyStrategies
-                        )
-                        .padding(20)
+                    VStack(spacing: 0) {
+                        Picker("", selection: $crisisSheetTab) {
+                            Text("Agora").tag(0)
+                            Text("Meu plano").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
+
+                        ScrollView {
+                            if crisisSheetTab == 0 {
+                                CrisisSupportCard(
+                                    safetyContact: safetyContact,
+                                    warningSigns: safetyWarningSigns,
+                                    strategies: safetyStrategies
+                                )
+                                .padding(20)
+                            } else {
+                                SafetyPlanEditorCard(
+                                    safetyContact: $safetyContact,
+                                    warningSigns: $safetyWarningSigns,
+                                    strategies: $safetyStrategies,
+                                    signature: neuroFlowRiskSignature,
+                                    careFocus: selectedCareFocus
+                                )
+                                .padding(20)
+                            }
+                        }
+                        .background(appBackground)
                     }
                     .background(appBackground)
                     .navigationTitle("Apoio em crise")
@@ -724,6 +780,11 @@ struct ContentView: View {
             }
             .onAppear {
                 prepareInitialData()
+                networkMonitor.pathUpdateHandler = { path in
+                    guard path.status == .satisfied else { return }
+                    Task { @MainActor in retryPendingSync() }
+                }
+                networkMonitor.start(queue: networkMonitorQueue)
                 if !authToken.isEmpty {
                     Task {
                         await loadCaregivers()

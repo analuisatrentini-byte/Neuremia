@@ -7,24 +7,71 @@ import SwiftUI
 import SwiftData
 import HealthKit
 import UIKit
+import Network
 
 extension ContentView {
     var settingsDashboard: some View {
+        // S6 (UX): consolidado de 6 seções técnicas para 6 seções orientadas
+        // por intenção do usuário. Jargão técnico removido do texto visível.
         Form {
-            Section("Conta") {
+            // ── 1. Conta e acesso ─────────────────────────────────────────────
+            Section("Conta e acesso") {
                 settingsNavLink(
                     icon: "person.crop.circle.fill",
                     tint: .blue,
-                    label: isLoggedIn ? "Login e perfil" : "Entrar na conta",
+                    label: isLoggedIn ? "Minha conta" : "Entrar na conta",
                     subtitle: authenticatedEmail.isEmpty ? "Não autenticado" : authenticatedEmail
                 ) {
                     scrollableDetail(title: "Conta") { loginSettingsCard }
                 }
 
+                if authenticatedRole == "clinician" || activeRole == .clinician {
+                    settingsNavLink(
+                        icon: "person.text.rectangle.fill",
+                        tint: .indigo,
+                        label: "Perfil de acesso",
+                        subtitle: activeRole == .clinician ? "Médico" : "Paciente"
+                    ) {
+                        scrollableDetail(title: "Perfil de acesso") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Picker("Perfil de acesso", selection: roleBinding) {
+                                    ForEach(AccessRole.allCases) { role in
+                                        Label(role.rawValue, systemImage: role.icon).tag(role)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .confirmationDialog(
+                                    roleChangePending == .clinician
+                                        ? "Trocar para perfil médico?"
+                                        : "Trocar para perfil paciente?",
+                                    isPresented: Binding(
+                                        get: { roleChangePending != nil },
+                                        set: { if !$0 { roleChangePending = nil } }
+                                    ),
+                                    titleVisibility: .visible
+                                ) {
+                                    Button(roleChangePending == .clinician ? "Alternar para médico" : "Alternar para paciente") {
+                                        if let pending = roleChangePending { applyRoleChange(pending) }
+                                        roleChangePending = nil
+                                    }
+                                    Button("Cancelar", role: .cancel) { roleChangePending = nil }
+                                } message: {
+                                    Text("A troca muda o dashboard ativo e os dados visíveis. Você pode reverter a qualquer momento.")
+                                }
+
+                                PrivacyStatusGrid(
+                                    consentAccepted: patients.first?.consentAccepted == true,
+                                    shareWithClinician: patients.first?.shareWithClinician == true,
+                                    shareWithCaregiver: shareWithCaregiver,
+                                    activeRole: activeRole
+                                )
+                            }
+                            .panelStyle()
+                        }
+                    }
+                }
+
                 Button {
-                    // Sprint 23: paciente que pulou o onboarding ganha um
-                    // caminho de volta. Marca a flag como falsa — o
-                    // fullScreenCover dispara no próximo render.
                     hasCompletedOnboarding = false
                     onboardingStep = 0
                     isShowingSettings = false
@@ -52,88 +99,10 @@ extension ContentView {
                     }
                 }
                 .buttonStyle(.plain)
-
-                settingsNavLink(
-                    icon: "person.text.rectangle.fill",
-                    tint: .indigo,
-                    label: "Perfil de acesso",
-                    subtitle: activeRole == .clinician ? "Médico" : "Paciente"
-                ) {
-                    scrollableDetail(title: "Perfil de acesso") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Perfil de acesso", selection: roleBinding) {
-                                ForEach(AccessRole.allCases) { role in
-                                    Label(role.rawValue, systemImage: role.icon).tag(role)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            // Sprint A: confirmation dialog antes de aplicar.
-                            .confirmationDialog(
-                                roleChangePending == .clinician
-                                    ? "Trocar para perfil médico?"
-                                    : "Trocar para perfil paciente?",
-                                isPresented: Binding(
-                                    get: { roleChangePending != nil },
-                                    set: { if !$0 { roleChangePending = nil } }
-                                ),
-                                titleVisibility: .visible
-                            ) {
-                                Button(roleChangePending == .clinician ? "Alternar para médico" : "Alternar para paciente") {
-                                    if let pending = roleChangePending {
-                                        applyRoleChange(pending)
-                                    }
-                                    roleChangePending = nil
-                                }
-                                Button("Cancelar", role: .cancel) { roleChangePending = nil }
-                            } message: {
-                                Text("A troca muda o dashboard ativo e os dados visíveis. Você pode reverter a qualquer momento.")
-                            }
-
-                            PrivacyStatusGrid(
-                                consentAccepted: patients.first?.consentAccepted == true,
-                                shareWithClinician: patients.first?.shareWithClinician == true,
-                                shareWithCaregiver: shareWithCaregiver,
-                                activeRole: activeRole
-                            )
-                        }
-                        .panelStyle()
-                    }
-                }
             }
 
-            Section("Privacidade e dados") {
-                settingsNavLink(
-                    icon: "lock.shield.fill",
-                    tint: .red,
-                    label: "Meus dados (LGPD)",
-                    subtitle: "Exportar, apagar, ver auditoria"
-                ) {
-                    scrollableDetail(title: "Privacidade e dados") { privacyAndDataCard }
-                }
-
-                // P2-2 (UX): seção renomeada de "Compliance" para
-                // "Segurança e privacidade" com linguagem acessível para
-                // pacientes e clínicos, sem jargão técnico de infraestrutura.
-                settingsNavLink(
-                    icon: "lock.shield",
-                    tint: .blue,
-                    label: "Segurança e privacidade",
-                    subtitle: "Como seus dados são protegidos"
-                ) {
-                    scrollableDetail(title: "Segurança e privacidade") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ComplianceRow(icon: "person.badge.key", title: "Acesso seguro", description: "Suas credenciais nunca ficam salvas em texto puro. A sessão expira automaticamente e pode ser encerrada a qualquer momento.")
-                            ComplianceRow(icon: "checkmark.seal", title: "Você decide o que compartilha", description: "O app bloqueia o salvamento até que você aceite expressamente. Autorizar o registro é independente de autorizar o compartilhamento com seu médico.")
-                            ComplianceRow(icon: "lock.doc", title: "Dados criptografados no dispositivo", description: "Textos sensíveis (diário, pensamentos, efeitos colaterais) são criptografados antes de serem armazenados no seu aparelho.")
-                            ComplianceRow(icon: "eye.slash", title: "Acesso do seu médico é controlado", description: "Seu médico só consegue ver seus dados após você aceitar o convite. Você pode revogar esse acesso a qualquer momento em Configurações → Profissionais com acesso.")
-                            ComplianceRow(icon: "doc.text", title: "Lei Geral de Proteção de Dados (LGPD)", description: "Você pode exportar todos os seus dados ou solicitar a exclusão da conta a qualquer momento em Configurações → Privacidade e dados.")
-                        }
-                        .panelStyle()
-                    }
-                }
-            }
-
-            Section("Pessoas") {
+            // ── 2. Meu médico e cuidadores ────────────────────────────────────
+            Section("Meu médico e cuidadores") {
                 settingsNavLink(
                     icon: "stethoscope",
                     tint: .green,
@@ -151,9 +120,63 @@ extension ContentView {
                 ) {
                     scrollableDetail(title: "Cuidadores") { caregiverManagementCard }
                 }
+
+                settingsNavLink(
+                    icon: "envelope.arrow.triangle.branch.fill",
+                    tint: .teal,
+                    label: "Compartilhar com minha equipe",
+                    subtitle: careTeamSendStatus
+                ) {
+                    scrollableDetail(title: "Equipe de cuidado") {
+                        CareTeamAutoSendCard(
+                            isEnabled: $autoCareTeamSendEnabled,
+                            contact: $careTeamContact,
+                            caregiverName: $caregiverName,
+                            caregiverRelationship: $caregiverRelationship,
+                            canShare: patients.first?.consentAccepted == true && (patients.first?.shareWithClinician == true || shareWithCaregiver),
+                            canShareCaregiver: patients.first?.consentAccepted == true && shareWithCaregiver,
+                            status: careTeamSendStatus,
+                            caregivers: remoteCaregivers,
+                            saveCaregiver: { Task { await saveCaregiverContact() } },
+                            refreshCaregivers: { Task { await loadCaregivers() } },
+                            sendNow: sendCurrentReportToCareTeam
+                        )
+                    }
+                }
             }
 
-            Section("Notificações") {
+            // ── 3. Privacidade ────────────────────────────────────────────────
+            Section("Privacidade") {
+                settingsNavLink(
+                    icon: "lock.shield.fill",
+                    tint: .red,
+                    label: "Meus dados",
+                    subtitle: "Exportar, apagar, histórico de acesso"
+                ) {
+                    scrollableDetail(title: "Meus dados") { privacyAndDataCard }
+                }
+
+                settingsNavLink(
+                    icon: "lock.shield",
+                    tint: .blue,
+                    label: "Como seus dados são protegidos",
+                    subtitle: nil
+                ) {
+                    scrollableDetail(title: "Segurança") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ComplianceRow(icon: "person.badge.key", title: "Acesso seguro", description: "Suas credenciais nunca ficam salvas em texto puro. A sessão expira automaticamente e pode ser encerrada a qualquer momento.")
+                            ComplianceRow(icon: "checkmark.seal", title: "Você decide o que compartilha", description: "O app bloqueia o salvamento até que você aceite expressamente. Autorizar o registro é independente de autorizar o compartilhamento com seu médico.")
+                            ComplianceRow(icon: "lock.doc", title: "Dados criptografados no dispositivo", description: "Textos sensíveis (diário, pensamentos, efeitos colaterais) são criptografados antes de serem armazenados no seu aparelho.")
+                            ComplianceRow(icon: "eye.slash", title: "Acesso do seu médico é controlado", description: "Seu médico só consegue ver seus dados após você aceitar o convite. Você pode revogar esse acesso a qualquer momento.")
+                            ComplianceRow(icon: "doc.text", title: "Lei Geral de Proteção de Dados (LGPD)", description: "Você pode exportar todos os seus dados ou solicitar a exclusão da conta a qualquer momento em Meus dados.")
+                        }
+                        .panelStyle()
+                    }
+                }
+            }
+
+            // ── 4. Lembretes ──────────────────────────────────────────────────
+            Section("Lembretes") {
                 settingsNavLink(
                     icon: "bell.badge.fill",
                     tint: .orange,
@@ -164,12 +187,12 @@ extension ContentView {
                 }
 
                 settingsNavLink(
-                    icon: "antenna.radiowaves.left.and.right",
+                    icon: "bell.and.waves.left.and.right",
                     tint: .purple,
-                    label: "Push remoto",
+                    label: "Notificações pelo app do médico",
                     subtitle: remotePushStatus
                 ) {
-                    scrollableDetail(title: "Push remoto") {
+                    scrollableDetail(title: "Notificações") {
                         RemotePushCard(
                             isEnabled: $remotePushEnabled,
                             status: remotePushStatus,
@@ -181,6 +204,7 @@ extension ContentView {
                 }
             }
 
+            // ── 5. Integrações ────────────────────────────────────────────────
             Section("Integrações") {
                 settingsNavLink(
                     icon: "heart.fill",
@@ -204,10 +228,10 @@ extension ContentView {
                 settingsNavLink(
                     icon: "externaldrive.fill",
                     tint: .gray,
-                    label: "Backup local",
+                    label: "Cópia de segurança",
                     subtitle: backgroundBackupStatus
                 ) {
-                    scrollableDetail(title: "Backup local") {
+                    scrollableDetail(title: "Cópia de segurança") {
                         BackupExportCard(
                             backupURL: backupURL,
                             isAutomatic: $autoBackupEnabled,
@@ -220,33 +244,31 @@ extension ContentView {
                         )
                     }
                 }
+            }
+
+            // ── 6. Documentos ─────────────────────────────────────────────────
+            Section("Documentos") {
+                settingsNavLink(
+                    icon: "doc.text",
+                    tint: .secondary,
+                    label: "Termos de uso",
+                    subtitle: nil
+                ) {
+                    LegalDocumentView(title: "Termos de Uso", documentText: neuroFlowTermsOfUse)
+                }
 
                 settingsNavLink(
-                    icon: "envelope.arrow.triangle.branch.fill",
-                    tint: .teal,
-                    label: "Equipe de cuidado",
-                    subtitle: careTeamSendStatus
+                    icon: "hand.raised.fill",
+                    tint: .secondary,
+                    label: "Política de privacidade",
+                    subtitle: nil
                 ) {
-                    scrollableDetail(title: "Equipe de cuidado") {
-                        CareTeamAutoSendCard(
-                            isEnabled: $autoCareTeamSendEnabled,
-                            contact: $careTeamContact,
-                            caregiverName: $caregiverName,
-                            caregiverRelationship: $caregiverRelationship,
-                            canShare: patients.first?.consentAccepted == true && (patients.first?.shareWithClinician == true || shareWithCaregiver),
-                            canShareCaregiver: patients.first?.consentAccepted == true && shareWithCaregiver,
-                            status: careTeamSendStatus,
-                            caregivers: remoteCaregivers,
-                            saveCaregiver: { Task { await saveCaregiverContact() } },
-                            refreshCaregivers: { Task { await loadCaregivers() } },
-                            sendNow: sendCurrentReportToCareTeam
-                        )
-                    }
+                    LegalDocumentView(title: "Política de Privacidade", documentText: neuroFlowPrivacyPolicy)
                 }
             }
 
             #if DEBUG
-            Section("Diagnóstico interno") {
+            Section("Diagnóstico") {
                 NavigationLink("Status de produção") {
                     scrollableDetail(title: "Status de produção") { ProductionReadinessCard() }
                 }
@@ -377,6 +399,10 @@ extension ContentView {
                         ppgManager.stop()
                         voiceManager.stop()
                         biometricConsentAccepted = false
+                        // M4 — sync revocation with backend consent registry.
+                        if !authToken.isEmpty {
+                            Task { try? await BackendAuthClient.revokeBiometricConsent(token: authToken) }
+                        }
                     } label: {
                         Text("Revogar")
                             .font(.caption.weight(.semibold))
@@ -397,6 +423,49 @@ extension ContentView {
             .tint(.red)
             .disabled(authToken.isEmpty)
             .accessibilityHint("Remove conta, vínculos médicos, alertas, relatórios e tokens do backend.")
+
+            Divider()
+
+            // ── Documentos legais ─────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Documentos legais")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Button {
+                        isShowingTermsOfUse = true
+                    } label: {
+                        Label("Termos de Uso", systemImage: "doc.text")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        isShowingPrivacyPolicy = true
+                    } label: {
+                        Label("Privacidade", systemImage: "lock.doc")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if legalAcceptedVersion == LegalVersion.current {
+                    Label("Versão \(LegalVersion.current) aceita", systemImage: "checkmark.seal.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        legalAcceptedVersion = ""  // force re-presentation of consent gate
+                    } label: {
+                        Label("Revisar consentimento (v\(LegalVersion.current))", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
         .panelStyle()
         .alert("Apagar dados clínicos antigos?", isPresented: $isConfirmingClinicalWipe) {
@@ -437,6 +506,12 @@ extension ContentView {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $isShowingTermsOfUse) {
+            LegalDocumentView(title: "Termos de Uso", documentText: neuroFlowTermsOfUse)
+        }
+        .sheet(isPresented: $isShowingPrivacyPolicy) {
+            LegalDocumentView(title: "Política de Privacidade", documentText: neuroFlowPrivacyPolicy)
         }
     }
 
@@ -583,14 +658,19 @@ extension ContentView {
     }
 
     var reminderSettingsCard: some View {
+        // S7 (UX): lembretes salvam automaticamente ao mudar toggle ou horário.
+        // O modelo mental do usuário é "liguei = ativado" — exigir um botão
+        // extra após o toggle quebrava esse modelo e gerava suporte ("por que
+        // meu lembrete não chegou?"). Feedback dado via toast central.
         VStack(alignment: .leading, spacing: 14) {
             SectionTitle(icon: "bell.badge", title: "Lembretes")
 
-            Toggle("Lembrar medicação", isOn: $medicationReminderEnabled)
+            Toggle("Lembrar de tomar medicação", isOn: $medicationReminderEnabled)
                 .toggleStyle(.switch)
+                .onChange(of: medicationReminderEnabled) { _, _ in
+                    Task { await configureLocalReminders() }
+                }
 
-            // P1-7 (UX): Stepper substituído por DatePicker — era preciso até
-            // 23 toques para mudar o horário. Com o DatePicker basta um gesto.
             DatePicker(
                 "Horário da medicação",
                 selection: Binding(
@@ -599,40 +679,39 @@ extension ContentView {
                             bySettingHour: medicationReminderHour, minute: 0, second: 0, of: Date()
                         ) ?? Date()
                     },
-                    set: { medicationReminderHour = Calendar.current.component(.hour, from: $0) }
+                    set: {
+                        medicationReminderHour = Calendar.current.component(.hour, from: $0)
+                        Task { await configureLocalReminders() }
+                    }
                 ),
                 displayedComponents: .hourAndMinute
             )
             .disabled(!medicationReminderEnabled)
 
-            Toggle("Lembrar check-in diário", isOn: $checkInReminderEnabled)
+            Toggle("Lembrar de registrar o dia", isOn: $checkInReminderEnabled)
                 .toggleStyle(.switch)
+                .onChange(of: checkInReminderEnabled) { _, _ in
+                    Task { await configureLocalReminders() }
+                }
 
             DatePicker(
-                "Horário do check-in",
+                "Horário do registro diário",
                 selection: Binding(
                     get: {
                         Calendar.current.date(
                             bySettingHour: checkInReminderHour, minute: 0, second: 0, of: Date()
                         ) ?? Date()
                     },
-                    set: { checkInReminderHour = Calendar.current.component(.hour, from: $0) }
+                    set: {
+                        checkInReminderHour = Calendar.current.component(.hour, from: $0)
+                        Task { await configureLocalReminders() }
+                    }
                 ),
                 displayedComponents: .hourAndMinute
             )
             .disabled(!checkInReminderEnabled)
 
-            Button {
-                Task {
-                    await configureLocalReminders()
-                }
-            } label: {
-                Label("Salvar lembretes no iPhone", systemImage: "bell.and.waves.left.and.right")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            Text("As notificações são locais do aparelho. Push remoto exigiria APNs/Firebase e servidor em produção.")
+            Text("Os avisos chegam pelo próprio iPhone, mesmo sem internet.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -844,7 +923,7 @@ extension ContentView {
             ForEach(filteredActiveAlerts.prefix(evolutionFilter == .alerts ? 20 : 3)) { alert in
                 AlertRow(alert: alert) {
                     alert.acknowledged = true
-                    try? modelContext.save()
+                    do { try modelContext.save() } catch { showToast("Erro ao salvar: \(error.localizedDescription)", level: .error) }
                 }
             }
         }
@@ -874,7 +953,7 @@ extension ContentView {
                 ForEach(activeAlerts) { alert in
                     AlertRow(alert: alert) {
                         alert.acknowledged = true
-                        try? modelContext.save()
+                        do { try modelContext.save() } catch { showToast("Erro ao salvar: \(error.localizedDescription)", level: .error) }
                     }
                 }
             }
@@ -979,7 +1058,7 @@ extension ContentView {
     func applyRoleChange(_ role: AccessRole) {
         let patient = ensurePatient()
         patient.activeRole = role.rawValue
-        try? modelContext.save()
+        do { try modelContext.save() } catch { showToast("Erro ao salvar: \(error.localizedDescription)", level: .error) }
     }
 
     func prepareInitialData() {
@@ -1077,15 +1156,12 @@ extension ContentView {
         persistCustomSymptoms()
     }
 
-    // N-I2: start a persistent NWPathMonitor that flushes the offline sync
-    // queue whenever the network path becomes satisfied. Cancels any previous
-    // monitor to avoid double-firing on hot reloads.
     func startNetworkMonitor() {
         networkMonitor.cancel()
         networkMonitor = NWPathMonitor()
-        networkMonitor.pathUpdateHandler = { [self] path in
+        networkMonitor.pathUpdateHandler = { path in
             guard path.status == .satisfied else { return }
-            DispatchQueue.main.async { retryPendingSync() }
+            Task { @MainActor in retryPendingSync() }
         }
         networkMonitor.start(queue: networkMonitorQueue)
     }
@@ -1294,7 +1370,8 @@ extension ContentView {
             // journal estava vazio ANTES do reset desta sessão de save.
             if !wasUrgent && hadEmptyJournal {
                 postSaveThought = ""
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
                     isShowingPostSavePrompt = true
                 }
             }
@@ -1352,6 +1429,17 @@ extension ContentView {
     func automaticAnswers(for scale: ScaleKind) -> [Int] {
         switch scale {
         case .phq9:
+            // Item 9 = "Pensamentos de que seria melhor estar morto ou de se
+            // machucar de alguma forma." (PHQ-9, Kroenke 2001).
+            // Use max(safetySeverity, textSeverity): the safety toggle covers
+            // explicit user disclosure; textSeverity catches written terms
+            // ("quero morrer", "sem saida") even when the toggle is not set.
+            // Without this, a patient writing high-risk text but not touching
+            // the safety control would produce item 9 = 0 — clinical underdetection.
+            let explicitItem9 = (scaleAnswers[.phq9] ?? []).indices.contains(8)
+                ? (scaleAnswers[.phq9]![8])
+                : 0
+            let item9 = max(safetySeverity, textSeverity, explicitItem9)
             return [
                 lowMoodSeverity,
                 max(lowMoodSeverity, textSeverity),
@@ -1361,7 +1449,7 @@ extension ContentView {
                 textSeverity,
                 automaticThoughts.isEmpty ? 0 : max(1, anxietySeverity - 1),
                 max(lowEnergySeverity, irritabilitySeverity),
-                safetySeverity
+                item9
             ]
         case .gad7:
             return [
@@ -1482,22 +1570,32 @@ extension ContentView {
     }
 
     func updateTypingSignals(text: String) {
-        bodySignalInteractionCount += 1
-        if typingStartedAt == nil && !text.isEmpty {
-            typingStartedAt = Date()
-            bodySignalTypingLatency = Date().timeIntervalSince(appSessionStartedAt)
+        // B2 — debounce: cancel any pending update and reschedule 100 ms later.
+        // This fires at most once per 100 ms regardless of how fast the user types,
+        // preventing unnecessary @State mutations on every keystroke.
+        _typingDebounceTask?.cancel()
+        _typingDebounceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return  // task was cancelled — a newer keystroke is in flight
+            }
+            bodySignalInteractionCount += 1
+            if typingStartedAt == nil && !text.isEmpty {
+                typingStartedAt = Date()
+                bodySignalTypingLatency = Date().timeIntervalSince(appSessionStartedAt)
+            }
+            guard let typingStartedAt else { return }
+            let elapsedMinutes = max(Date().timeIntervalSince(typingStartedAt) / 60, 0.05)
+            bodySignalTypingSpeed = Double(text.count) / elapsedMinutes
         }
-
-        guard let typingStartedAt else { return }
-        let elapsedMinutes = max(Date().timeIntervalSince(typingStartedAt) / 60, 0.05)
-        bodySignalTypingSpeed = Double(text.count) / elapsedMinutes
     }
 
     func generateReport() {
         let text = ClinicalAnalysis.reportText(checkIns: sortedCheckIns, assessments: sortedAssessments)
         reportPreview = text
-        reportPDFURL = makePDFReport(text: text)
         reportCSVURL = makeCSVReport()
+
         let coveredCheckIns = sortedCheckIns.prefix(14)
         modelContext.insert(ClinicalReport(
             summary: text,
@@ -1519,13 +1617,48 @@ extension ContentView {
         } catch {
             reportStatusMessage = "Relatório gerado, mas não foi possível salvar localmente."
         }
+
+        // B1 — PDF rendering is CPU-intensive; run off the main actor so the
+        // UI stays responsive while the page layout and Core Graphics calls execute.
+        let checkInsSnapshot = Array(sortedCheckIns)
+        let assessmentsSnapshot = Array(sortedAssessments)
+        let medicationSnapshot = medicationPlans
+        let symptomsSnapshot = customSymptoms
+        let summarySnapshot = summary
+        Task.detached(priority: .userInitiated) {
+            let url = await PDFReportRenderer.render(
+                text: text,
+                checkIns: checkInsSnapshot,
+                assessments: assessmentsSnapshot,
+                medications: medicationSnapshot,
+                symptoms: symptomsSnapshot,
+                summary: summarySnapshot
+            )
+            await MainActor.run { self.reportPDFURL = url }
+        }
     }
 
     func prepareReportPreviewOnly() {
         let text = ClinicalAnalysis.reportText(checkIns: sortedCheckIns, assessments: sortedAssessments)
         reportPreview = text
-        reportPDFURL = makePDFReport(text: text)
         reportCSVURL = makeCSVReport()
+
+        let checkInsSnapshot = Array(sortedCheckIns)
+        let assessmentsSnapshot = Array(sortedAssessments)
+        let medicationSnapshot = medicationPlans
+        let symptomsSnapshot = customSymptoms
+        let summarySnapshot = summary
+        Task.detached(priority: .userInitiated) {
+            let url = await PDFReportRenderer.render(
+                text: text,
+                checkIns: checkInsSnapshot,
+                assessments: assessmentsSnapshot,
+                medications: medicationSnapshot,
+                symptoms: symptomsSnapshot,
+                summary: summarySnapshot
+            )
+            await MainActor.run { self.reportPDFURL = url }
+        }
     }
 
     /// Encrypt a PHI string field for the backup JSON.

@@ -103,17 +103,11 @@ struct NeuroFlowApp: App {
     let sharedModelContainer: ModelContainer
 
     init() {
-        let schema = Schema([
-            PatientProfile.self,
-            DailyCheckIn.self,
-            ScaleAssessment.self,
-            ClinicalAlert.self,
-            ClinicalReport.self
-        ])
+        let schema = Schema(NeuroFlowSchemaV1.models, version: NeuroFlowSchemaV1.versionIdentifier)
         let persistentConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
-        // 1st try — normal persistent open.
-        if let container = try? ModelContainer(for: schema, configurations: [persistentConfig]) {
+        // 1st try — normal persistent open with migration plan.
+        if let container = try? ModelContainer(for: schema, migrationPlan: NeuroFlowMigrationPlan.self, configurations: [persistentConfig]) {
             sharedModelContainer = container
             return
         }
@@ -129,7 +123,7 @@ struct NeuroFlowApp: App {
             try? FileManager.default.removeItem(at: sidecar)
         }
 
-        if let container = try? ModelContainer(for: schema, configurations: [persistentConfig]) {
+        if let container = try? ModelContainer(for: schema, migrationPlan: NeuroFlowMigrationPlan.self, configurations: [persistentConfig]) {
             sharedModelContainer = container
             NeuroFlowApp.storeRecoveryMessage =
                 "O banco de dados local foi recriado após um erro de compatibilidade. " +

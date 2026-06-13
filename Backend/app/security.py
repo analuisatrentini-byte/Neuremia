@@ -3,6 +3,8 @@ import os
 import secrets as _secrets
 from datetime import datetime, timedelta, timezone
 
+import pyotp
+
 # Sprint B: migrado de python-jose (deprecated + CVE-2024-33663/33664) para
 # PyJWT (mantida ativamente). API próxima mas com diferenças:
 #  - PyJWT exige `algorithms=[...]` em decode (já fazíamos)
@@ -112,7 +114,7 @@ def generate_refresh_token() -> tuple[str, str, datetime]:
     the raw value is returned to the caller exactly once."""
     raw = _secrets.token_urlsafe(48)
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     return raw, digest, expires_at
 
 
@@ -135,6 +137,41 @@ def encrypt_field(value: str | None) -> str:
         return ""
 
     return field_cipher.encrypt(value.encode()).decode()
+
+
+# ------------------------------------------------------------------ TOTP (M2)
+
+_TOTP_ISSUER = os.getenv("NEUROFLOW_APP_NAME", "NeuroFlow")
+_TOTP_PENDING_TTL_SECONDS = 300  # 5 minutes to enter OTP after password ok
+
+
+def generate_totp_secret() -> str:
+    """Return a new base32 TOTP secret (not yet persisted)."""
+    return pyotp.random_base32()
+
+
+def totp_provisioning_uri(secret: str, user_email: str) -> str:
+    return pyotp.TOTP(secret).provisioning_uri(name=user_email, issuer_name=_TOTP_ISSUER)
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    """Accept current window ± 1 (30-second slots) to tolerate minor clock skew."""
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def generate_totp_pending_session() -> tuple[str, str, datetime]:
+    """Return (raw_session_id, sha256_hash, expires_at).
+    Mirrors the refresh-token pattern: only the hash is persisted."""
+    raw = _secrets.token_urlsafe(32)
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=_TOTP_PENDING_TTL_SECONDS
+    )
+    return raw, digest, expires_at
+
+
+def hash_pending_session(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def decrypt_field(value: str | None) -> str:

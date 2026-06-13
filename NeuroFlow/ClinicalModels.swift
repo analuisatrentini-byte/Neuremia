@@ -17,7 +17,7 @@ final class PatientProfile {
     var activeRole: String
     var createdAt: Date
 
-    // N-I1: explicit relationships with cascade-delete so that removing a
+ : explicit relationships with cascade-delete so that removing a
     // PatientProfile also removes all associated clinical records and queries
     // scoped to a profile never bleed into records belonging to another user.
     @Relationship(deleteRule: .cascade) var checkIns: [DailyCheckIn] = []
@@ -42,7 +42,7 @@ final class DailyCheckIn {
     /// store level, mirroring the one-per-day business rule enforced in code.
     @Attribute(.unique) var dayKey: String
     var date: Date
-    var patient: PatientProfile?   // N-I1: back-reference for scoped queries
+    var patient: PatientProfile?
     var mood: Double
     var anxiety: Double
     var energy: Double
@@ -88,7 +88,7 @@ final class DailyCheckIn {
 final class ScaleAssessment {
     var scaleName: String
     var date: Date
-    var patient: PatientProfile?   // N-I1
+    var patient: PatientProfile?
     var answers: [Int]
     var score: Int
     var interpretation: String
@@ -106,7 +106,7 @@ final class ScaleAssessment {
 final class ClinicalAlert {
     var date: Date
     var level: String
-    var patient: PatientProfile?   // N-I1
+    var patient: PatientProfile?
     var title: String
     var message: String
     var acknowledged: Bool
@@ -125,7 +125,7 @@ final class ClinicalReport {
     var date: Date
     var summary: String
     var riskLevel: String
-    var patient: PatientProfile?   // N-I1
+    var patient: PatientProfile?
     // N-M4: fields required for medical-legal validity
     var clinicianName: String
     var periodStart: Date
@@ -321,7 +321,7 @@ struct TextRiskAssessment {
     }
 }
 
-// N-I5: unified backup envelope — single source of truth for export/import.
+// Unified backup envelope — single source of truth for export/import.
 // PHI text fields (journalEntry, automaticThoughts, sideEffects, prescription,
 // changeNote, safetyPlan fields) are stored as AES-GCM base-64 ciphertext
 // produced by DraftStore.encryptString(_:). Legacy plaintext imports are
@@ -407,7 +407,7 @@ struct DailyCheckInSnapshot: Codable, Equatable {
     let libido: Double
     let medicationTaken: Bool
     let suicidalIdeation: Bool
-    // PHI free-text fields stored as AES-GCM base-64 ciphertext (N-C1/N-I5)
+    // PHI free-text fields stored as AES-GCM base-64 ciphertext.
     let sideEffectsEnc: String
     let automaticThoughtsEnc: String
     let journalEntryEnc: String
@@ -443,4 +443,21 @@ enum MonthlyReportSummary {
             "Adesão medicamentosa: \(String(format: "%.0f", adherence))%"
         ]
     }
+}
+
+
+enum NeuroFlowSchemaV1: VersionedSchema {
+    static var versionIdentifier = Schema.Version(1, 0, 0)
+    static var models: [any PersistentModel.Type] = [
+        PatientProfile.self,
+        DailyCheckIn.self,
+        ScaleAssessment.self,
+        ClinicalAlert.self,
+        ClinicalReport.self,
+    ]
+}
+
+enum NeuroFlowMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] = [NeuroFlowSchemaV1.self]
+    static var stages: [MigrationStage] = []
 }

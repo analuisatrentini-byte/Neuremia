@@ -32,9 +32,9 @@ enum KeychainStore {
         case apnsDeviceToken = "neuroflow.apnsDeviceToken"
         case draftEncryptionKey = "neuroflow.draftEncryptionKey"
         case userRole = "neuroflow.userRole"
-        // N-I4: email and name are PII — keep in Keychain, not UserDefaults
         case userEmail = "neuroflow.userEmail"
         case userName = "neuroflow.userName"
+        case userId = "neuroflow.userId"
     }
 
     private static let service = "io.neuroflow.app.secure"
@@ -117,8 +117,9 @@ enum KeychainStore {
         ("neuroflowAuthToken", .authToken),
         ("neuroflowAPNsDeviceToken", .apnsDeviceToken),
         ("neuroflowUserRole", .userRole),
-        ("neuroflowUserEmail", .userEmail),   // N-I4
-        ("neuroflowUserName", .userName)       // N-I4
+        ("neuroflowUserEmail", .userEmail),
+        ("neuroflowUserName", .userName),
+        ("neuroflowUserId", .userId)
     ]
 
     private static func baseQuery(for key: Key) -> [String: Any] {
@@ -348,7 +349,8 @@ enum BackendConfiguration {
         #if DEBUG
         return URL(string: "http://127.0.0.1:8000")!
         #else
-        fatalError("NeuroFlowAPIBaseURL is required in Info.plist for release builds")
+        assertionFailure("NeuroFlowAPIBaseURL is missing in Info.plist — set it in Release.xcconfig before archiving.")
+        return URL(string: "https://api.your-domain.com")!
         #endif
     }
 
@@ -459,6 +461,13 @@ struct BackendUser: Decodable, Hashable {
         case riskScore = "risk_score"
         case riskLevel = "risk_level"
     }
+}
+
+struct BackendPatientListResponse: Decodable {
+    let items: [BackendUser]
+    let total: Int
+    let skip: Int
+    let limit: Int
 }
 
 struct BackendLoginResponse: Decodable {
@@ -1006,7 +1015,7 @@ actor SessionRefreshCoordinator {
 enum BackendAuthClient {
     static let live: BackendAPI = LiveBackendAPI()
 
-    static var baseURL: URL { BackendConfiguration.baseURL }
+    static var baseURL: URL { BackendConfiguration.baseURL.appending(path: "v1") }
 
     private static let timeoutInterval: TimeInterval = 30
 
@@ -1118,7 +1127,8 @@ enum BackendAuthClient {
     }
 
     static func clinicianPatients(token: String) async throws -> [BackendUser] {
-        try await get(path: "clinician/patients", token: token)
+        let response: BackendPatientListResponse = try await get(path: "clinician/patients?limit=200", token: token)
+        return response.items
     }
 
     static func clinicianSentInvites(token: String) async throws -> [BackendSentInvite] {
@@ -1207,6 +1217,23 @@ enum BackendAuthClient {
 
     static func deleteAccount(token: String) async throws -> BackendAccountDeleteResponse {
         try await deleteReturning(path: "me", token: token)
+    }
+
+    // M4 — Biometric consent sync with backend consent registry (LGPD Art. 9 §1).
+    static func grantBiometricConsent(token: String) async throws {
+        struct ConsentPayload: Encodable {
+            let purpose: String
+            let policy_version: String
+        }
+        try await rawPost(
+            path: "me/consents",
+            payload: ConsentPayload(purpose: "biometric_processing", policy_version: "1.0"),
+            token: token
+        )
+    }
+
+    static func revokeBiometricConsent(token: String) async throws {
+        try await rawDelete(path: "me/consents/biometric_processing", token: token)
     }
 
     // MARK: - Private helpers

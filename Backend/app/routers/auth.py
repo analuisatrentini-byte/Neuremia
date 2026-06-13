@@ -4,7 +4,7 @@ Extracted from the monolithic main.py in Sprint 17 (C32). All requests in
 this router are throttled by `slowapi`; disabled in tests via env.
 """
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from ..rate_limit import limiter
 from ..security import (
     decode_access_token_payload,
     encrypt_field,
+    generate_totp_pending_session,
     hash_password,
     hash_refresh_token,
     hash_reset_code,
@@ -66,7 +67,7 @@ _FAILED_LOGIN_THRESHOLD = 5
 _FAILED_LOGIN_BACKOFF_BASE_SECONDS = 60
 
 
-@router.post("/login", response_model=schemas.TokenResponse)
+@router.post("/login", response_model=schemas.LoginResponse)
 @limiter.limit("10/minute")
 def login(
     request: Request,
@@ -78,7 +79,7 @@ def login(
     # Sprint B: bloqueio temporário por conta após N tentativas falhas. Rate
     # limit por IP (10/min) já existia mas era ineficaz contra credential
     # stuffing distribuído. O lockout por conta complementa.
-    if user is not None and user.locked_until is not None and user.locked_until > datetime.utcnow():
+    if user is not None and user.locked_until is not None and user.locked_until > datetime.now(timezone.utc):
         # Mensagem deliberadamente genérica — não revela que a conta existe.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
@@ -91,7 +92,7 @@ def login(
                 # Backoff geométrico: 5 falhas → 60s, 6 → 120s, 7 → 240s...
                 overflow = user.failed_login_count - _FAILED_LOGIN_THRESHOLD
                 backoff = _FAILED_LOGIN_BACKOFF_BASE_SECONDS * (2 ** overflow)
-                user.locked_until = datetime.utcnow() + timedelta(seconds=backoff)
+                user.locked_until = datetime.now(timezone.utc) + timedelta(seconds=backoff)
                 audit(db, user, "login_lockout", "user", str(user.id))
             db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -101,10 +102,23 @@ def login(
         user.failed_login_count = 0
         user.locked_until = None
 
+    # M2 — if TOTP is enabled, pause here and issue a pending session instead
+    # of a full token pair. The client must complete /auth/2fa/verify.
+    if user.totp_enabled:
+        raw, digest, expires_at = generate_totp_pending_session()
+        db.add(models.TotpPendingSession(
+            user_id=user.id,
+            session_hash=digest,
+            expires_at=expires_at,
+        ))
+        audit(db, user, "login_totp_pending", "user", str(user.id))
+        db.commit()
+        return schemas.LoginResponse(requires_totp=True, pending_session_id=raw)
+
     audit(db, user, "login", "user", str(user.id))
     access, refresh = issue_token_pair(db, user)
     db.commit()
-    return schemas.TokenResponse(
+    return schemas.LoginResponse(
         access_token=access,
         refresh_token=refresh,
         user=user_read(db, user),
@@ -121,14 +135,14 @@ def refresh_session(
     """Trade a refresh token for a new access+refresh pair."""
     digest = hash_refresh_token(payload.refresh_token)
     record = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == digest).first()
-    if record is None or record.revoked_at is not None or record.expires_at < datetime.utcnow():
+    if record is None or record.revoked_at is not None or record.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     user = db.query(models.User).filter(models.User.id == record.user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    record.revoked_at = datetime.utcnow()
+    record.revoked_at = datetime.now(timezone.utc)
     access, refresh = issue_token_pair(db, user)
     audit(db, user, "refresh_session", "refresh_token", str(record.id))
     db.commit()
@@ -154,7 +168,7 @@ def logout(
         models.RefreshToken.user_id == user.id,
     ).first()
     if record is not None and record.revoked_at is None:
-        record.revoked_at = datetime.utcnow()
+        record.revoked_at = datetime.now(timezone.utc)
         audit(db, user, "logout", "refresh_token", str(record.id))
 
     access_payload = decode_access_token_payload(token) or {}
@@ -165,7 +179,7 @@ def logout(
         if existing is None:
             db.add(models.RevokedAccessToken(
                 jti=jti,
-                expires_at=datetime.utcfromtimestamp(exp),
+                expires_at=datetime.fromtimestamp(exp, tz=timezone.utc),
             ))
             audit(db, user, "logout", "access_token", jti)
 
@@ -186,7 +200,7 @@ def request_password_reset(
         db.add(models.PasswordResetToken(
             user_id=user.id,
             token_hash=hash_reset_code(reset_code),
-            expires_at=datetime.utcnow() + timedelta(minutes=30),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
         ))
         sent = notifications.send_password_reset_email(user.email, reset_code)
         audit(db, user, "password_reset_requested", "user", str(user.id))
@@ -219,16 +233,16 @@ def confirm_password_reset(
         models.PasswordResetToken.token_hash == digest,
         models.PasswordResetToken.user_id == user.id,
     ).first()
-    if record is None or record.used_at is not None or record.expires_at < datetime.utcnow():
+    if record is None or record.used_at is not None or record.expires_at < datetime.now(timezone.utc):
         raise generic_error
 
     user.password_hash = hash_password(payload.new_password)
-    record.used_at = datetime.utcnow()
+    record.used_at = datetime.now(timezone.utc)
 
     db.query(models.RefreshToken).filter(
         models.RefreshToken.user_id == user.id,
         models.RefreshToken.revoked_at.is_(None),
-    ).update({models.RefreshToken.revoked_at: datetime.utcnow()}, synchronize_session=False)
+    ).update({models.RefreshToken.revoked_at: datetime.now(timezone.utc)}, synchronize_session=False)
     user.token_epoch = user.token_epoch + 1
 
     audit(db, user, "password_reset_confirmed", "user", str(user.id))

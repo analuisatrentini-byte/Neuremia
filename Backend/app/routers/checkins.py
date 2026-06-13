@@ -2,6 +2,8 @@
 clinical-alert fan-out that high-risk submissions trigger."""
 import json
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -17,10 +19,12 @@ from ..services import (
     can_access_patient,
     checkin_read,
     decrypted_full_name,
+    has_active_consent,
     log_notification,
     notify_linked_clinicians,
     notify_linked_clinicians_report,
     report_read,
+    update_risk_cache,
 )
 
 
@@ -34,6 +38,8 @@ def create_checkin(
     user: models.User = Depends(current_user),
 ):
     require_role(user, models.UserRole.patient.value)
+    if not has_active_consent(db, user.id, "clinical_data_storage"):
+        raise HTTPException(status_code=403, detail="Consentimento LGPD para armazenamento clínico não concedido")
     payload_data = payload.model_dump()
     payload_data["side_effects"] = encrypt_field(payload.side_effects)
     payload_data["automatic_thoughts"] = encrypt_field(payload.automatic_thoughts)
@@ -55,6 +61,9 @@ def create_checkin(
     audit(db, user, "create_checkin", "daily_checkin", "pending")
     db.commit()
     db.refresh(checkin)
+    # M9 — keep risk cache fresh after every check-in.
+    update_risk_cache(db, user.id)
+    db.commit()
     return checkin_read(checkin)
 
 
@@ -67,6 +76,8 @@ def create_assessment(
     patient_id = user.id if user.role == models.UserRole.patient.value else payload.patient_id
     if patient_id is None or not can_access_patient(db, user, patient_id):
         raise HTTPException(status_code=403, detail="No access to patient")
+    if not has_active_consent(db, patient_id, "clinical_data_storage"):
+        raise HTTPException(status_code=403, detail="Consentimento LGPD para armazenamento clínico não concedido")
 
     assessment = models.ScaleAssessment(
         patient_id=patient_id,
@@ -91,6 +102,8 @@ def create_report(
     patient_id = user.id if user.role == models.UserRole.patient.value else payload.patient_id
     if patient_id is None or not can_access_patient(db, user, patient_id):
         raise HTTPException(status_code=403, detail="No access to patient")
+    if not has_active_consent(db, patient_id, "clinical_data_storage"):
+        raise HTTPException(status_code=403, detail="Consentimento LGPD para armazenamento clínico não concedido")
 
     report = models.ClinicalReport(
         patient_id=patient_id,
@@ -141,3 +154,29 @@ def create_report(
     db.commit()
     db.refresh(report)
     return report_read(report)
+
+
+@router.delete("/checkins/{checkin_id}", response_model=schemas.MessageResponse)
+def delete_checkin(
+    checkin_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    require_role(user, models.UserRole.patient.value)
+    checkin = (
+        db.query(models.DailyCheckIn)
+        .filter(
+            models.DailyCheckIn.id == checkin_id,
+            models.DailyCheckIn.patient_id == user.id,
+            models.DailyCheckIn.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if checkin is None:
+        raise HTTPException(status_code=404, detail="Check-in not found")
+    checkin.deleted_at = datetime.now(timezone.utc)
+    audit(db, user, "delete_checkin", "daily_checkin", str(checkin_id))
+    db.commit()
+    update_risk_cache(db, user.id)
+    db.commit()
+    return schemas.MessageResponse(message="Check-in removido.")

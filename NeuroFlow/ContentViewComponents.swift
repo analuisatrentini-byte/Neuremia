@@ -45,8 +45,11 @@ struct MoodWheelCard: View {
 
                 Spacer()
 
+                // B3 — hide decorative emoji from VoiceOver; the card label below already
+                // conveys the current state.
                 Text(currentEmoji)
                     .font(.largeTitle)
+                    .accessibilityHidden(true)
             }
 
             CircularMoodWheel(emotions: emotions, mood: $mood, anxiety: $anxiety, energy: $energy)
@@ -64,6 +67,10 @@ struct MoodWheelCard: View {
                 .stroke(Color.neuroGold.opacity(0.35), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        // B3 — expose the card state as a single VoiceOver element so assistive
+        // technology users get a concise summary before navigating into the wheel.
+        .accessibilityLabel("Roda de humor. Estado atual: \(currentAccessibilityLabel).")
+        .accessibilityHint("Deslize para cima ou para baixo para ajustar o humor. Acione dois vezes para abrir as opções de emoção.")
     }
 
     private var currentEmoji: String {
@@ -71,6 +78,18 @@ struct MoodWheelCard: View {
         if mood <= 1.5 { return "😔" }
         if anxiety >= 4 { return "😟" }
         return "🙂"
+    }
+
+    private var currentAccessibilityLabel: String {
+        let moodDesc: String
+        switch mood {
+        case 4...: moodDesc = "humor elevado"
+        case 3..<4: moodDesc = "humor neutro"
+        case 2..<3: moodDesc = "humor baixo"
+        default:   moodDesc = "humor muito baixo"
+        }
+        let anxietyDesc = anxiety >= 4 ? ", ansiedade alta" : anxiety >= 3 ? ", ansiedade moderada" : ""
+        return moodDesc + anxietyDesc
     }
 
 }
@@ -133,30 +152,50 @@ struct CircularMoodWheel: View {
                         energy = emotion.energy
                     }
                 } label: {
+                    let selected = isSelected(emotion)
+                    let bgColor: Color = selected ? emotion.color.opacity(0.24) : Color(UIColor.secondarySystemGroupedBackground)
+                    let strokeColor: Color = selected ? emotion.color : Color.clear
+                    let shadowColor: Color = selected ? emotion.color.opacity(0.24) : Color.clear
                     VStack(spacing: 2) {
+                        // B3 — emoji is decorative; the button label below handles VoiceOver.
                         Text(emotion.emoji)
                             .font(.title)
+                            .accessibilityHidden(true)
                         Text(emotion.title)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
                     .frame(width: 76, height: 62)
-                    .background(isSelected(emotion) ? emotion.color.opacity(0.24) : Color(.secondarySystemGroupedBackground))
+                    .background(bgColor)
                     .overlay {
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(isSelected(emotion) ? emotion.color : Color.clear, lineWidth: 1.5)
+                            .stroke(strokeColor, lineWidth: 1.5)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .scaleEffect(isSelected(emotion) ? 1.08 : 1)
-                    .shadow(color: isSelected(emotion) ? emotion.color.opacity(0.24) : .clear, radius: 8, y: 4)
+                    .scaleEffect(selected ? 1.08 : 1)
+                    .shadow(color: shadowColor, radius: 8, y: 4)
                 }
                 .buttonStyle(.plain)
                 .offset(offset(for: index))
+                // B3 — clear label + selected state for each emotion button.
+                .accessibilityLabel(emotion.title)
+                .accessibilityHint("Humor \(Int(emotion.mood)), ansiedade \(Int(emotion.anxiety)), energia \(Int(emotion.energy))")
+                .accessibilityAddTraits(isSelected(emotion) ? .isSelected : [])
             }
+
+            // B3 — render the central display as a separate, non-interactive element
+            // so VoiceOver announces the current state when focus lands on the wheel.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Emoção selecionada: \(selectedTitle)")
         }
         .frame(maxWidth: .infinity)
         .frame(height: 270)
+        // B3 — announce the wheel as a group with adjustable trait so horizontal
+        // swipe gestures work naturally in VoiceOver.
+        .accessibilityElement(children: .contain)
     }
 
     private var selectedEmoji: String {
@@ -3341,6 +3380,108 @@ struct ScaleAccessCard: View {
     }
 }
 
+// MARK: - B5: Locale-aware crisis numbers
+
+/// Maps a device-locale region code to the primary crisis hotline and
+/// emergency medical number for that country. Falls back to the Brazilian
+/// defaults (CVV 188 / SAMU 192) when the region is unknown.
+struct CrisisNumbers {
+    let crisisNumber: String   // mental-health / suicide prevention
+    let crisisName: String
+    let crisisSubtitle: String
+    let emergencyNumber: String
+    let emergencyName: String
+    let emergencySubtitle: String
+
+    static var forCurrentLocale: CrisisNumbers {
+        let region = Locale.current.region?.identifier ?? "BR"
+        return lookup(region: region)
+    }
+
+    static func lookup(region: String) -> CrisisNumbers {
+        switch region {
+        case "BR":
+            return CrisisNumbers(
+                crisisNumber: "188", crisisName: "CVV (188)",
+                crisisSubtitle: "Centro de Valorização da Vida — 24h, gratuito.",
+                emergencyNumber: "192", emergencyName: "SAMU (192)",
+                emergencySubtitle: "Emergência médica — risco imediato à vida."
+            )
+        case "US":
+            return CrisisNumbers(
+                crisisNumber: "988", crisisName: "988 Suicide & Crisis Lifeline",
+                crisisSubtitle: "Free, confidential — 24/7.",
+                emergencyNumber: "911", emergencyName: "Emergency (911)",
+                emergencySubtitle: "Medical emergency — immediate risk to life."
+            )
+        case "GB":
+            return CrisisNumbers(
+                crisisNumber: "116123", crisisName: "Samaritans (116 123)",
+                crisisSubtitle: "Free, confidential — 24/7.",
+                emergencyNumber: "999", emergencyName: "Emergency (999)",
+                emergencySubtitle: "Medical emergency — immediate risk to life."
+            )
+        case "PT":
+            return CrisisNumbers(
+                crisisNumber: "213544545", crisisName: "SOS Voz Amiga (213 544 545)",
+                crisisSubtitle: "Apoio emocional — 15h30–00h.",
+                emergencyNumber: "112", emergencyName: "Emergência (112)",
+                emergencySubtitle: "Emergência médica — risco imediato à vida."
+            )
+        case "AR":
+            return CrisisNumbers(
+                crisisNumber: "135", crisisName: "Centro de Asistencia al Suicida (135)",
+                crisisSubtitle: "Gratuito, confidencial — 24h.",
+                emergencyNumber: "107", emergencyName: "SAME (107)",
+                emergencySubtitle: "Emergencia médica — riesgo inmediato de vida."
+            )
+        case "MX":
+            return CrisisNumbers(
+                crisisNumber: "800290000", crisisName: "SAPTEL (800 290 0024)",
+                crisisSubtitle: "Gratuito, confidencial — 24h.",
+                emergencyNumber: "911", emergencyName: "Emergencia (911)",
+                emergencySubtitle: "Emergencia médica — riesgo inmediato de vida."
+            )
+        case "DE":
+            return CrisisNumbers(
+                crisisNumber: "0800111 0111", crisisName: "Telefonseelsorge (0800 111 0 111)",
+                crisisSubtitle: "Kostenlos, vertraulich — 24/7.",
+                emergencyNumber: "112", emergencyName: "Notruf (112)",
+                emergencySubtitle: "Medizinischer Notfall — unmittelbare Lebensgefahr."
+            )
+        case "FR":
+            return CrisisNumbers(
+                crisisNumber: "3114", crisisName: "Numéro National Prévention Suicide (3114)",
+                crisisSubtitle: "Gratuit, confidentiel — 24h/24.",
+                emergencyNumber: "15", emergencyName: "SAMU (15)",
+                emergencySubtitle: "Urgence médicale — risque vital immédiat."
+            )
+        case "ES":
+            return CrisisNumbers(
+                crisisNumber: "024", crisisName: "Línea de Atención a la Conducta Suicida (024)",
+                crisisSubtitle: "Gratuito, confidencial — 24h.",
+                emergencyNumber: "112", emergencyName: "Emergencia (112)",
+                emergencySubtitle: "Emergencia médica — riesgo inmediato de vida."
+            )
+        case "AU":
+            return CrisisNumbers(
+                crisisNumber: "131114", crisisName: "Lifeline (13 11 14)",
+                crisisSubtitle: "Free, confidential — 24/7.",
+                emergencyNumber: "000", emergencyName: "Emergency (000)",
+                emergencySubtitle: "Medical emergency — immediate risk to life."
+            )
+        default:
+            // International fallback: IASP member network info page
+            return CrisisNumbers(
+                crisisNumber: "188", crisisName: "Linha de Crise (188)",
+                crisisSubtitle: "Ligue para o serviço de crise local.",
+                emergencyNumber: "192", emergencyName: "Emergência (192)",
+                emergencySubtitle: "Emergência médica — risco imediato à vida."
+            )
+        }
+    }
+}
+
 struct CrisisSupportCard: View {
     let safetyContact: String
     let warningSigns: String
@@ -3356,6 +3497,10 @@ struct CrisisSupportCard: View {
         return URL(string: "tel://\(digits)")
     }
 
+    // B5 — resolve numbers at view creation time so the card always reflects
+    // the current device locale without hardcoding BR numbers.
+    private let numbers = CrisisNumbers.forCurrentLocale
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Plano de segurança", systemImage: "cross.case.fill")
@@ -3368,20 +3513,20 @@ struct CrisisSupportCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 8) {
-                if let url = URL(string: "tel://188") {
+                if let url = URL(string: "tel://\(numbers.crisisNumber.filter(\.isNumber))") {
                     crisisCallButton(
                         url: url,
-                        title: "Ligar para CVV (188)",
-                        subtitle: "Centro de Valorização da Vida — 24h, gratuito.",
+                        title: "Ligar para \(numbers.crisisName)",
+                        subtitle: numbers.crisisSubtitle,
                         tint: .red
                     )
                 }
 
-                if let url = URL(string: "tel://192") {
+                if let url = URL(string: "tel://\(numbers.emergencyNumber.filter(\.isNumber))") {
                     crisisCallButton(
                         url: url,
-                        title: "SAMU (192)",
-                        subtitle: "Emergência médica — risco imediato à vida.",
+                        title: numbers.emergencyName,
+                        subtitle: numbers.emergencySubtitle,
                         tint: .red
                     )
                 }

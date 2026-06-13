@@ -8,9 +8,13 @@ the data is fetched over the authenticated, encrypted backend channel.
 import os
 import smtplib
 import json
+import time
 from email.message import EmailMessage
 from urllib import request
 from urllib.parse import urlparse
+
+_SMTP_MAX_ATTEMPTS = 3
+_SMTP_RETRY_BACKOFF_BASE = 1.0  # seconds; doubles on each retry
 
 
 GENERIC_ALERT_SUBJECT = "NeuroFlow: nova atualizacao clinica"
@@ -69,12 +73,20 @@ class NotificationService:
         email["Subject"] = subject
         email.set_content(body)
 
-        with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-            server.starttls()
-            server.login(self.smtp_user, self.smtp_password)
-            server.send_message(email)
+        last_exc: Exception | None = None
+        for attempt in range(_SMTP_MAX_ATTEMPTS):
+            try:
+                with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                    server.starttls()
+                    server.login(self.smtp_user, self.smtp_password)
+                    server.send_message(email)
+                return True
+            except (smtplib.SMTPException, OSError) as exc:
+                last_exc = exc
+                if attempt < _SMTP_MAX_ATTEMPTS - 1:
+                    time.sleep(_SMTP_RETRY_BACKOFF_BASE * (2 ** attempt))
 
-        return True
+        raise last_exc  # type: ignore[misc]
 
     def send_clinical_alert_email(
         self,
@@ -92,31 +104,17 @@ class NotificationService:
     def send_password_reset_email(self, recipient: str, reset_code: str) -> bool:
         # Password reset code is the only PHI-free, action-specific value we
         # let through SMTP. The reset endpoint validates it server-side.
-        if not self.email_enabled:
-            return False
-
-        email = EmailMessage()
-        email["From"] = self.sender
-        email["To"] = recipient
-        email["Subject"] = "NeuroFlow: recuperacao de senha"
-        email.set_content(
-            "\n".join(
-                [
-                    "Recebemos uma solicitacao de recuperacao de senha.",
-                    "",
-                    f"Codigo temporario: {reset_code}",
-                    "",
-                    "Se voce nao pediu isso, ignore este e-mail.",
-                ]
-            )
+        return self._send_generic_email(
+            recipient,
+            "NeuroFlow: recuperacao de senha",
+            "\n".join([
+                "Recebemos uma solicitacao de recuperacao de senha.",
+                "",
+                f"Codigo temporario: {reset_code}",
+                "",
+                "Se voce nao pediu isso, ignore este e-mail.",
+            ]),
         )
-
-        with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-            server.starttls()
-            server.login(self.smtp_user, self.smtp_password)
-            server.send_message(email)
-
-        return True
 
     def send_clinical_report_email(
         self,

@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Charts
+import SwiftData
 
 extension ContentView {
     // MARK: - Root containers (Sprint 19 / U1' — TabView raiz para paciente)
@@ -205,6 +206,10 @@ extension ContentView {
 
     @ViewBuilder
     var patientRoot: some View {
+        // UX: tab "Sinais" removida da navegação primária — PPG e análise de
+        // voz são funcionalidades opcionais de uso episódico. Foram movidas
+        // para Ferramentas > Sinais do corpo para não competir visualmente
+        // com o check-in diário. 3 abas comunica propósito mais claramente.
         TabView(selection: $selectedPatientPage) {
             patientTabHome
                 .tabItem { Label(PatientPage.diary.rawValue, systemImage: PatientPage.diary.icon) }
@@ -212,10 +217,6 @@ extension ContentView {
                 // reconhecidos sem o paciente precisar voltar à aba Hoje.
                 .badge(homeTabBadgeCount)
                 .tag(PatientPage.diary)
-
-            patientTabBody
-                .tabItem { Label(PatientPage.bodySignals.rawValue, systemImage: PatientPage.bodySignals.icon) }
-                .tag(PatientPage.bodySignals)
 
             patientTabEvolution
                 .tabItem { Label(PatientPage.evolution.rawValue, systemImage: PatientPage.evolution.icon) }
@@ -350,7 +351,5 @@ extension ContentView {
             .toolbar { toolbarContent }
         }
     }
-
-    @ToolbarContentBuilder
 
 }

@@ -36,9 +36,10 @@ extension ContentView {
                         Text("Toque no estado que mais combina com hoje")
                             .font(.headline)
 
+                        // Campos essenciais — sempre visíveis. Humor, Ansiedade
+                        // e Sono são os 3 preditores mais relevantes clinicamente
+                        // e os que menos exigem reflexão prolongada.
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                            // Rótulos qualitativos sem prefixo numérico — paciente
-                            // pensa em "Muito difícil" / "Ótimo", não em "1" / "5".
                             VisualMetricPicker(title: "Humor", icon: "face.smiling", value: $mood, options: [
                                 MetricOption(label: "Muito difícil", value: 1, color: .red),
                                 MetricOption(label: "Difícil", value: 2, color: .orange),
@@ -55,22 +56,6 @@ extension ContentView {
                                 MetricOption(label: "Pico", value: 5, color: .red)
                             ])
 
-                            VisualMetricPicker(title: "Energia", icon: "bolt", value: $energy, options: [
-                                MetricOption(label: "Exausto", value: 1, color: .red),
-                                MetricOption(label: "Baixa", value: 2, color: .orange),
-                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                                MetricOption(label: "Boa", value: 4, color: .green),
-                                MetricOption(label: "Alta", value: 5, color: .green)
-                            ])
-
-                            VisualMetricPicker(title: "Irritabilidade", icon: "exclamationmark.bubble", value: $irritability, options: [
-                                MetricOption(label: "Calmo", value: 1, color: .green),
-                                MetricOption(label: "Leve", value: 2, color: .green),
-                                MetricOption(label: "Média", value: 3, color: .neuroYellow),
-                                MetricOption(label: "Alta", value: 4, color: .orange),
-                                MetricOption(label: "Pico", value: 5, color: .red)
-                            ])
-
                             VisualMetricPicker(title: "Sono", icon: "moon.zzz", value: $sleepHours, options: [
                                 MetricOption(label: "<4h", value: 4, color: .red),
                                 MetricOption(label: "5h", value: 5, color: .orange),
@@ -78,29 +63,65 @@ extension ContentView {
                                 MetricOption(label: "7h", value: 7, color: .green),
                                 MetricOption(label: "8h+", value: 8, color: .green)
                             ], suffix: "h")
+                        }
 
-                            VisualMetricPicker(title: "Apetite", icon: "fork.knife", value: $appetite, options: [
-                                MetricOption(label: "Muito baixo", value: 1, color: .red),
-                                MetricOption(label: "Baixo", value: 2, color: .orange),
-                                MetricOption(label: "Normal", value: 3, color: .neuroYellow),
-                                MetricOption(label: "Alto", value: 4, color: .orange),
-                                MetricOption(label: "Voraz", value: 5, color: .red)
-                            ])
-
-                            // P2-7 (UX): "Não se aplica" evita ruído de dados
-                            // com valor default 3 para quem ignora o campo.
-                            VisualMetricPicker(
-                                title: "Libido", icon: "heart", value: $libido,
-                                options: [
-                                    MetricOption(label: "Muito baixa", value: 1, color: .red),
+                        // Campos opcionais — expandidos apenas quando o paciente
+                        // quiser registrar com mais detalhe.
+                        DisclosureGroup(isExpanded: $diarySection1DetailsExpanded) {
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                                VisualMetricPicker(title: "Energia", icon: "bolt", value: $energy, options: [
+                                    MetricOption(label: "Exausto", value: 1, color: .red),
                                     MetricOption(label: "Baixa", value: 2, color: .orange),
                                     MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                    MetricOption(label: "Boa", value: 4, color: .green),
+                                    MetricOption(label: "Alta", value: 5, color: .green)
+                                ])
+
+                                VisualMetricPicker(title: "Irritabilidade", icon: "exclamationmark.bubble", value: $irritability, options: [
+                                    MetricOption(label: "Calmo", value: 1, color: .green),
+                                    MetricOption(label: "Leve", value: 2, color: .green),
+                                    MetricOption(label: "Média", value: 3, color: .neuroYellow),
                                     MetricOption(label: "Alta", value: 4, color: .orange),
-                                    MetricOption(label: "Muito alta", value: 5, color: .red)
-                                ],
-                                skipLabel: "Não se aplica",
-                                skipValue: 0.0
-                            )
+                                    MetricOption(label: "Pico", value: 5, color: .red)
+                                ])
+
+                                VisualMetricPicker(title: "Apetite", icon: "fork.knife", value: $appetite, options: [
+                                    MetricOption(label: "Muito baixo", value: 1, color: .red),
+                                    MetricOption(label: "Baixo", value: 2, color: .orange),
+                                    MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                    MetricOption(label: "Alto", value: 4, color: .orange),
+                                    MetricOption(label: "Voraz", value: 5, color: .red)
+                                ])
+
+                                // P2-7 (UX): "Não se aplica" evita ruído de dados
+                                // com valor default 3 para quem ignora o campo.
+                                VisualMetricPicker(
+                                    title: "Libido", icon: "heart", value: $libido,
+                                    options: [
+                                        MetricOption(label: "Muito baixa", value: 1, color: .red),
+                                        MetricOption(label: "Baixa", value: 2, color: .orange),
+                                        MetricOption(label: "Normal", value: 3, color: .neuroYellow),
+                                        MetricOption(label: "Alta", value: 4, color: .orange),
+                                        MetricOption(label: "Muito alta", value: 5, color: .red)
+                                    ],
+                                    skipLabel: "Não se aplica",
+                                    skipValue: 0.0
+                                )
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: diarySection1DetailsExpanded ? "minus.circle.fill" : "plus.circle.fill")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.neuroOrange)
+                                Text(diarySection1DetailsExpanded ? "Menos detalhes" : "Mais detalhes")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.neuroOrange)
+                            }
+                            .padding(.top, 4)
+                            .accessibilityLabel(diarySection1DetailsExpanded
+                                ? "Recolher campos de Energia, Irritabilidade, Apetite e Libido"
+                                : "Expandir campos de Energia, Irritabilidade, Apetite e Libido")
                         }
                     }
                     .padding(.top, 8)
@@ -151,10 +172,27 @@ extension ContentView {
                 // ── Seção 3: Texto livre e gatilhos ──────────────────────────
                 DisclosureGroup(isExpanded: $diarySection3Expanded) {
                     VStack(alignment: .leading, spacing: 16) {
+                        // S10 (UX): TriggerMapCard movido para dentro desta seção
+                        // — o nome "Texto livre e gatilhos" prometia gatilhos mas
+                        // não os entregava aqui, criando inconsistência silenciosa.
+                        TriggerMapCard(
+                            alcoholTrigger: $alcoholTrigger,
+                            poorSleepTrigger: $poorSleepTrigger,
+                            stressTrigger: $stressTrigger,
+                            conflictTrigger: $conflictTrigger,
+                            routineChangeTrigger: $routineChangeTrigger,
+                            menstrualTrigger: $menstrualTrigger,
+                            customTriggerText: $customTriggerText,
+                            customTriggers: $customTriggers,
+                            checkIns: sortedCheckIns
+                        )
                         LabeledTextEditor(title: "Efeitos colaterais", systemImage: "pills", placeholder: "Ex.: sonolência, náusea, agitação", text: $sideEffects)
+                            .onChange(of: sideEffects) { _, v in if v.count > 2000 { sideEffects = String(v.prefix(2000)) } }
                         LabeledTextEditor(title: "Pensamentos do dia", systemImage: "bubble.left.and.text.bubble.right", placeholder: "Ex.: pensamentos que apareceram várias vezes hoje", text: $automaticThoughts)
+                            .onChange(of: automaticThoughts) { _, v in if v.count > 2000 { automaticThoughts = String(v.prefix(2000)) } }
                         LabeledTextEditor(title: "Meu diário", systemImage: "square.and.pencil", placeholder: "Escreva como foi seu dia, sono, acontecimentos e o que quiser lembrar depois.", text: $journalEntry)
                             .onChange(of: journalEntry) { _, newValue in
+                                if newValue.count > 5000 { journalEntry = String(newValue.prefix(5000)) }
                                 updateTypingSignals(text: newValue)
                             }
 
@@ -166,23 +204,8 @@ extension ContentView {
                         .font(.headline)
                         .foregroundStyle(.primary)
                 }
-
-                // P1-2 (UX): status de salvar migrado para o toast central.
-                // O onChange(of: saveStatusMessage) no body faz o dispatch.
             }
             .panelStyle()
-
-            TriggerMapCard(
-                alcoholTrigger: $alcoholTrigger,
-                poorSleepTrigger: $poorSleepTrigger,
-                stressTrigger: $stressTrigger,
-                conflictTrigger: $conflictTrigger,
-                routineChangeTrigger: $routineChangeTrigger,
-                menstrualTrigger: $menstrualTrigger,
-                customTriggerText: $customTriggerText,
-                customTriggers: $customTriggers,
-                checkIns: sortedCheckIns
-            )
             // Cards de ferramentas (SafetyPlanEditor, Engagement, Psychoeducation,
             // DSM5Foundation, ScaleAccess, MonthlyReport, ReportExport) foram
             // movidos para a tab "Ferramentas" no Sprint 19. Mantemos só
@@ -224,6 +247,10 @@ extension ContentView {
 
                     Button {
                         biometricConsentAccepted = true
+                        // M4 — sync grant with backend consent registry.
+                        if !authToken.isEmpty {
+                            Task { try? await BackendAuthClient.grantBiometricConsent(token: authToken) }
+                        }
                     } label: {
                         Text("Concordar e ativar sinais biométricos")
                             .font(.subheadline.weight(.semibold))

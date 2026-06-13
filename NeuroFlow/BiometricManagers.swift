@@ -19,6 +19,9 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
     @Published var perfusion = 0.0
     @Published var stress = 0.0
     @Published var signalQuality = 0.0
+    /// True when the last measured BPM is within the physiologically plausible range (40–200).
+    /// Use this to filter out artefacts (obstructed camera, extreme motion) from risk calculations.
+    @Published var isHeartRatePhysiologicallyValid = false
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "neuroflow.ppg.camera")
@@ -33,7 +36,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
             if granted {
                 self.queue.async { self.startSession() }
             } else {
-                DispatchQueue.main.async { self.status = "Permissão da câmera negada." }
+                Task { @MainActor in self.status = "Permissão da câmera negada." }
             }
         }
     }
@@ -42,7 +45,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
         queue.async {
             self.session.stopRunning()
             self.setTorch(active: false)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isMeasuring = false
                 self.status = self.heartRate > 0 ? "Leitura finalizada." : "Medição interrompida."
             }
@@ -59,7 +62,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
               let input = try? AVCaptureDeviceInput(device: camera),
               session.canAddInput(input) else {
-            DispatchQueue.main.async { self.status = "Câmera traseira indisponível." }
+            Task { @MainActor in self.status = "Câmera traseira indisponível." }
             session.commitConfiguration()
             return
         }
@@ -79,7 +82,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
         setTorch(active: true)
         session.startRunning()
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.isMeasuring = true
             self.status = "Cubra câmera e flash com o dedo. Fique parado por 30 segundos."
         }
@@ -96,7 +99,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
             }
             device.unlockForConfiguration()
         } catch {
-            DispatchQueue.main.async { self.status = "Não foi possível controlar o flash." }
+            Task { @MainActor in self.status = "Não foi possível controlar o flash." }
         }
     }
 
@@ -149,7 +152,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
 
     private func analyzeSamples(snapshot samples: [(time: TimeInterval, value: Double)], brightness: Double) {
         guard samples.count > 60 else {
-            DispatchQueue.main.async { self.signalQuality = min(max(brightness / 180, 0), 1) }
+            Task { @MainActor in self.signalQuality = min(max(brightness / 180, 0), 1) }
             return
         }
 
@@ -187,7 +190,7 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
             .map { $0 - $1 }
             .filter { (0.42...1.5).contains($0) }
         guard intervals.count >= 3 else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.signalQuality = quality
                 if brightness < 70 {
                     self.status = "Pouca pressão/luz. Cubra câmera e flash com o dedo."
@@ -206,15 +209,13 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
         let intervalDeviation = standardDeviation(intervals)
         let cleanIntervals = intervals.filter { abs($0 - averageInterval) <= max(intervalDeviation * 2.2, 0.08) }
         guard cleanIntervals.count >= 4 else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.signalQuality = max(quality - 0.18, 0)
                 self.status = "Picos inconsistentes. Mantenha dedo parado por mais tempo."
             }
             return
         }
         let cleanAverageInterval = cleanIntervals.reduce(0, +) / Double(cleanIntervals.count)
-        // N-I3: store the raw physiological value — do NOT clamp to 40-160.
-        // Clamping would mask bradycardia (<40 BPM) and tachycardia (>160 BPM).
         let bpm = 60 / cleanAverageInterval
         let bpmIsPlausible = bpm >= 40 && bpm <= 200
         let adjustedQuality = bpmIsPlausible ? quality : quality * 0.5
@@ -229,14 +230,17 @@ final class PPGCameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutp
         let hrvForStress = hrvMs > 0 ? hrvMs : 45
         let stressIndex = min(max((bpm - 55) * 0.8 + (70 - hrvForStress) * 0.7 + (1 - quality) * 25, 0), 100)
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.signalQuality = adjustedQuality
             self.heartRate = bpm
+            self.isHeartRatePhysiologicallyValid = bpmIsPlausible
             self.hrv = hrvMs
             self.perfusion = perfusionIndex
             self.respiration = respirationEstimate
-            self.stress = stressIndex
-            if quality < 0.45 {
+            self.stress = bpmIsPlausible ? stressIndex : 0
+            if !bpmIsPlausible {
+                self.status = "Sinal fisiologicamente inválido (\(Int(bpm)) BPM). Reposicione o dedo."
+            } else if quality < 0.45 {
                 self.status = "Sinal instável. Reposicione o dedo."
             } else if hrvMs == 0 {
                 self.status = "Batimentos detectados. HRV exige sinal limpo e janela maior."
@@ -318,14 +322,14 @@ final class VoiceSignalManager: NSObject, ObservableObject {
     func start() {
         if #available(iOS 17.0, *) {
             AVAudioApplication.requestRecordPermission { [weak self] granted in
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     guard let self else { return }
                     granted ? self.startRecording() : (self.status = "Permissão do microfone negada.")
                 }
             }
         } else {
             AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     guard let self else { return }
                     granted ? self.startRecording() : (self.status = "Permissão do microfone negada.")
                 }
@@ -424,7 +428,7 @@ final class VoiceSignalManager: NSObject, ObservableObject {
         let minutes = max(Date().timeIntervalSince(recordingStart) / 60, 0.01)
         let rhythmValue = Double(burstsSnapshot) / minutes
 
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor in [weak self] in
             guard let self else { return }
             self.averagePower = avgPower
             self.pauseRatio = pause

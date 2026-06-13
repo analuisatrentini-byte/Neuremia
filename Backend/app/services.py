@@ -64,7 +64,18 @@ def audit(
 def issue_token_pair(db: Session, user: models.User) -> tuple[str, str]:
     """Mint an access token and a fresh refresh token. Refresh token is
     persisted as a SHA-256 hash; the raw value is returned to the caller
-    once."""
+    once.
+
+    M5 — also prunes already-expired refresh tokens for this user to keep
+    the table lean without a background cron. Revoked tokens whose
+    revoked_at is older than REFRESH_TOKEN_EXPIRE_DAYS are also cleaned up."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    db.query(models.RefreshToken).filter(
+        models.RefreshToken.user_id == user.id,
+        models.RefreshToken.expires_at < now,
+    ).delete(synchronize_session=False)
+
     raw_refresh, digest, expires_at = generate_refresh_token()
     db.add(models.RefreshToken(
         user_id=user.id,
@@ -104,6 +115,15 @@ def can_access_patient(db: Session, user: models.User, patient_id: int) -> bool:
     return db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == user.id,
         models.ClinicianPatientLink.patient_id == patient_id,
+    ).first() is not None
+
+
+def has_active_consent(db: Session, user_id: int, purpose: str) -> bool:
+    """Returns True iff the user has a non-revoked consent record for purpose."""
+    return db.query(models.Consent).filter(
+        models.Consent.user_id == user_id,
+        models.Consent.purpose == purpose,
+        models.Consent.revoked_at.is_(None),
     ).first() is not None
 
 
@@ -189,6 +209,55 @@ def sent_invite_read(db: Session, invite: models.ClinicianPatientInvite) -> sche
     )
 
 
+def invite_read_batch(
+    db: Session,
+    invites: list[models.ClinicianPatientInvite],
+) -> list[schemas.ClinicianInviteRead]:
+    """M3 — batch clinician lookup: one query instead of N."""
+    clinician_ids = list({inv.clinician_id for inv in invites})
+    clinicians = {
+        u.id: u
+        for u in db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
+    }
+    results = []
+    for invite in invites:
+        clinician = clinicians.get(invite.clinician_id)
+        results.append(schemas.ClinicianInviteRead(
+            id=invite.id,
+            clinician_id=invite.clinician_id,
+            patient_id=invite.patient_id,
+            clinician_full_name=decrypted_full_name(clinician),
+            clinician_email=clinician.email if clinician else "",
+            status=invite.status,
+            created_at=invite.created_at,
+        ))
+    return results
+
+
+def sent_invite_read_batch(
+    db: Session,
+    invites: list[models.ClinicianPatientInvite],
+) -> list[schemas.ClinicianSentInviteRead]:
+    """M3 — batch patient lookup: one query instead of N."""
+    patient_ids = list({inv.patient_id for inv in invites})
+    patients = {
+        u.id: u
+        for u in db.query(models.User).filter(models.User.id.in_(patient_ids)).all()
+    }
+    results = []
+    for invite in invites:
+        patient = patients.get(invite.patient_id)
+        results.append(schemas.ClinicianSentInviteRead(
+            id=invite.id,
+            patient_id=invite.patient_id,
+            patient_full_name=decrypted_full_name(patient),
+            patient_email=patient.email if patient else "",
+            status=invite.status,
+            created_at=invite.created_at,
+        ))
+    return results
+
+
 # --------------------------------------------------------------- risk scoring
 
 
@@ -236,6 +305,20 @@ def _compute_risk_from_records(
         score += 16 if alert.level == "high" else 8
 
     bounded_score = int(min(max(round(score), 0), 100))
+
+    # Clinical override: certain individual signals are unconditionally HIGH
+    # regardless of the aggregate score. These thresholds mirror the iOS-side
+    # check-in alert logic (checkins.py) and the ClinicalThresholds constants
+    # in the Swift client so that both surfaces agree on severity.
+    if checkins:
+        latest = checkins[0]
+        if (
+            latest.suicidal_ideation
+            or latest.mood <= 1.0     # ClinicalThresholds.moodHighRisk
+            or latest.anxiety >= 4.5  # ClinicalThresholds.anxietyHighRisk
+        ):
+            return max(bounded_score, 66), "high"
+
     if bounded_score >= 66:
         return bounded_score, "high"
     if bounded_score >= 34:
@@ -243,10 +326,66 @@ def _compute_risk_from_records(
     return bounded_score, "low"
 
 
+# --------------------------------------------------------- M9: RiskCache helpers
+
+
+def update_risk_cache(db: Session, patient_id: int) -> None:
+    """Recompute and persist risk score for one patient. Called synchronously
+    after every check-in so /clinician/patients reads from cache."""
+    from datetime import datetime, timezone
+    score, level = patient_risk_summary_live(db, patient_id)
+    cache = db.query(models.RiskCache).filter(
+        models.RiskCache.patient_id == patient_id
+    ).first()
+    if cache is None:
+        db.add(models.RiskCache(
+            patient_id=patient_id,
+            risk_score=score,
+            risk_level=level,
+            computed_at=datetime.now(timezone.utc),
+        ))
+    else:
+        cache.risk_score = score
+        cache.risk_level = level
+        cache.computed_at = datetime.now(timezone.utc)
+
+
+def risk_from_cache_batch(
+    db: Session, patient_ids: list[int]
+) -> dict[int, tuple[int, str]]:
+    """Read cached risk scores. Falls back to live computation for any patient
+    not yet in the cache (e.g. first check-in not yet processed)."""
+    if not patient_ids:
+        return {}
+    cached = {
+        row.patient_id: (row.risk_score, row.risk_level)
+        for row in db.query(models.RiskCache).filter(
+            models.RiskCache.patient_id.in_(patient_ids)
+        ).all()
+    }
+    missing = [pid for pid in patient_ids if pid not in cached]
+    for pid in missing:
+        cached[pid] = patient_risk_summary_live(db, pid)
+    return cached
+
+
 def patient_risk_summary(db: Session, patient_id: int) -> tuple[int, str]:
+    """Public alias — reads from cache when available, live otherwise."""
+    cache = db.query(models.RiskCache).filter(
+        models.RiskCache.patient_id == patient_id
+    ).first()
+    if cache is not None:
+        return cache.risk_score, cache.risk_level
+    return patient_risk_summary_live(db, patient_id)
+
+
+def patient_risk_summary_live(db: Session, patient_id: int) -> tuple[int, str]:
     checkins = (
         db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.patient_id == patient_id)
+        .filter(
+            models.DailyCheckIn.patient_id == patient_id,
+            models.DailyCheckIn.deleted_at.is_(None),  # B6
+        )
         .order_by(models.DailyCheckIn.created_at.desc())
         .limit(30)
         .all()
@@ -263,6 +402,7 @@ def patient_risk_summary(db: Session, patient_id: int) -> tuple[int, str]:
         .filter(
             models.ClinicalAlert.patient_id == patient_id,
             models.ClinicalAlert.acknowledged == False,  # noqa: E712
+            models.ClinicalAlert.deleted_at.is_(None),  # B6
         )
         .all()
     )
@@ -277,9 +417,14 @@ def _top_n_per_patient(db: Session, model, patient_ids: list[int], n: int):
         order_by=model.created_at.desc(),
     ).label("rn")
 
+    base_where = [model.patient_id.in_(patient_ids)]
+    # B6 — exclude soft-deleted rows from ranking window when the model has deleted_at.
+    if hasattr(model, "deleted_at"):
+        base_where.append(model.deleted_at.is_(None))
+
     ranked = (
         select(model.id, rn_column)
-        .where(model.patient_id.in_(patient_ids))
+        .where(*base_where)
         .subquery()
     )
     stmt = (
@@ -292,6 +437,13 @@ def _top_n_per_patient(db: Session, model, patient_ids: list[int], n: int):
 
 
 def patient_risk_summary_batch(
+    db: Session, patient_ids: list[int]
+) -> dict[int, tuple[int, str]]:
+    """M9 — read from RiskCache, falling back to live computation for new patients."""
+    return risk_from_cache_batch(db, patient_ids)
+
+
+def _patient_risk_summary_batch_live(
     db: Session, patient_ids: list[int]
 ) -> dict[int, tuple[int, str]]:
     """Compute risk for many patients in 3 queries instead of 3*N (Sprint 13)."""
@@ -312,6 +464,7 @@ def patient_risk_summary_batch(
         .filter(
             models.ClinicalAlert.patient_id.in_(patient_ids),
             models.ClinicalAlert.acknowledged == False,  # noqa: E712
+            models.ClinicalAlert.deleted_at.is_(None),  # B6
         )
         .all()
     ):
@@ -395,14 +548,17 @@ def notify_linked_clinicians(
             log_notification(db, patient.id, clinician.email, "email", "clinical_alert", sent_email, title)
             tokens = db.query(models.DeviceToken).filter(models.DeviceToken.user_id == clinician.id).all()
             for token in tokens:
+                # title/body are stripped inside send_push_webhook (PHI-safe).
+                # Only event_type and patient_id survive the safe_data whitelist
+                # so the clinician app can route to the right screen without
+                # any clinical content leaving the authenticated channel.
                 sent_push = notifications.send_push_webhook(
                     token.token,
                     "NeuroFlow",
-                    f"Alerta de {patient_name}: {title}",
+                    "Nova atualizacao clinica",
                     data={
                         "event_type": "clinical_alert",
                         "patient_id": str(patient.id),
-                        "risk_title": title,
                     },
                 )
                 log_notification(
@@ -446,7 +602,7 @@ def notify_linked_clinicians_report(
                 sent_push = notifications.send_push_webhook(
                     token.token,
                     "NeuroFlow",
-                    f"Novo relatório de {patient_name}",
+                    "Novo relatorio clinico disponivel",
                     data={
                         "event_type": "clinical_report",
                         "patient_id": str(patient.id),

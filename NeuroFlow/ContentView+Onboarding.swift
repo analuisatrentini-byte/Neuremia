@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 extension ContentView {
     // MARK: - Onboarding (Sprint 20)
@@ -143,6 +144,8 @@ extension ContentView {
                 .padding(.horizontal, 24)
             }
 
+            // Primário: completa o onboarding e usa o app sem conta.
+            // O paciente pode criar/entrar na conta depois em Configurações.
             Button {
                 let patient = ensurePatient()
                 patient.consentAccepted = true
@@ -158,9 +161,33 @@ extension ContentView {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding(.horizontal, 32)
+
+            // Secundário: tem conta ou quer criar antes de começar.
+            // Completa o onboarding E abre o formulário de login diretamente,
+            // sem exigir que o usuário descubra o caminho em Configurações.
+            Button {
+                let patient = ensurePatient()
+                patient.consentAccepted = true
+                try? modelContext.save()
+                hasCompletedOnboarding = true
+                onboardingStep = 0
+                // Abre a sheet de login após o onboarding fechar.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    isShowingLoginSheet = true
+                }
+            } label: {
+                Text("Já tenho conta — entrar")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .padding(.horizontal, 32)
             .padding(.bottom, 16)
 
-            Button("Pular") {
+            Button("Continuar sem conta") {
                 hasCompletedOnboarding = true
                 onboardingStep = 0
             }

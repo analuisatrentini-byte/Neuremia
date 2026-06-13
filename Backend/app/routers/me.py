@@ -1,7 +1,8 @@
 """/me/* — endpoints scoped to the authenticated patient."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -15,9 +16,15 @@ from ..services import (
     checkin_read,
     decrypted_full_name,
     invite_read,
+    invite_read_batch,
     report_read,
     user_read,
 )
+
+# Maximum number of check-in records returned in a single export to prevent
+# timeouts and oversized payloads. ~500 check-ins ≈ 500 days ≈ 16+ months.
+_EXPORT_CHECKINS_MAX = 500
+_EXPORT_OTHER_MAX = 200
 
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -114,7 +121,7 @@ def grant_consent(
         db.add(existing)
     else:
         existing.revoked_at = None
-        existing.granted_at = datetime.utcnow()
+        existing.granted_at = datetime.now(timezone.utc)
         existing.policy_version = payload.policy_version
     audit(db, user, "grant_consent", "consent", payload.purpose)
     db.commit()
@@ -136,7 +143,7 @@ def revoke_consent(
     if consent is None:
         raise HTTPException(status_code=404, detail="Consent not found")
     if consent.revoked_at is None:
-        consent.revoked_at = datetime.utcnow()
+        consent.revoked_at = datetime.now(timezone.utc)
         audit(db, user, "revoke_consent", "consent", purpose)
         db.commit()
         db.refresh(consent)
@@ -156,31 +163,79 @@ def my_audit_logs(db: Session = Depends(get_db), user: models.User = Depends(cur
 
 
 @router.get("/export", response_model=schemas.AccountExportRead)
-def export_my_account(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
-    checkins = (
-        db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.patient_id == user.id)
-        .order_by(models.DailyCheckIn.created_at.desc())
-        .all()
-    )
-    assessments = (
-        db.query(models.ScaleAssessment)
-        .filter(models.ScaleAssessment.patient_id == user.id)
-        .order_by(models.ScaleAssessment.created_at.desc())
-        .all()
-    )
-    alerts = (
-        db.query(models.ClinicalAlert)
-        .filter(models.ClinicalAlert.patient_id == user.id)
-        .order_by(models.ClinicalAlert.created_at.desc())
-        .all()
-    )
-    reports = (
-        db.query(models.ClinicalReport)
-        .filter(models.ClinicalReport.patient_id == user.id)
-        .order_by(models.ClinicalReport.created_at.desc())
-        .all()
-    )
+def export_my_account(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+    from_date: Optional[datetime] = Query(
+        default=None,
+        description="ISO-8601 UTC start date (inclusive). Omit for all records.",
+        example="2025-01-01T00:00:00",
+    ),
+    to_date: Optional[datetime] = Query(
+        default=None,
+        description="ISO-8601 UTC end date (inclusive). Omit for all records.",
+        example="2025-12-31T23:59:59",
+    ),
+):
+    """Export the caller's data.
+
+    Supports optional date-range filtering via ``from_date`` / ``to_date`` so
+    that the iOS client can request a specific period without fetching all
+    historical records (important after years of daily check-ins).
+
+    Without filters the response is capped at ``_EXPORT_CHECKINS_MAX`` records
+    (most-recent first) to prevent timeouts on large accounts. To export a full
+    archive, iterate over yearly windows using ``from_date``/``to_date``.
+    """
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(
+            status_code=422,
+            detail="from_date must be earlier than or equal to to_date",
+        )
+
+    def _date_filter(query, model):
+        if from_date:
+            query = query.filter(model.created_at >= from_date)
+        if to_date:
+            query = query.filter(model.created_at <= to_date)
+        return query
+
+    checkin_query = _date_filter(
+        db.query(models.DailyCheckIn).filter(
+            models.DailyCheckIn.patient_id == user.id,
+            models.DailyCheckIn.deleted_at.is_(None),  # B6
+        ),
+        models.DailyCheckIn,
+    ).order_by(models.DailyCheckIn.created_at.desc())
+
+    # Apply hard cap only when no date window is requested. When the caller
+    # provides a narrow window (e.g. one month) there is no risk of overflow.
+    if from_date is None and to_date is None:
+        checkin_query = checkin_query.limit(_EXPORT_CHECKINS_MAX)
+
+    checkins = checkin_query.all()
+
+    assessments = _date_filter(
+        db.query(models.ScaleAssessment).filter(models.ScaleAssessment.patient_id == user.id),
+        models.ScaleAssessment,
+    ).order_by(models.ScaleAssessment.created_at.desc()).limit(_EXPORT_OTHER_MAX).all()
+
+    alerts = _date_filter(
+        db.query(models.ClinicalAlert).filter(
+            models.ClinicalAlert.patient_id == user.id,
+            models.ClinicalAlert.deleted_at.is_(None),  # B6
+        ),
+        models.ClinicalAlert,
+    ).order_by(models.ClinicalAlert.created_at.desc()).limit(_EXPORT_OTHER_MAX).all()
+
+    reports = _date_filter(
+        db.query(models.ClinicalReport).filter(
+            models.ClinicalReport.patient_id == user.id,
+            models.ClinicalReport.deleted_at.is_(None),  # B6
+        ),
+        models.ClinicalReport,
+    ).order_by(models.ClinicalReport.created_at.desc()).limit(_EXPORT_OTHER_MAX).all()
+
     logs = (
         db.query(models.AuditLog)
         .filter(models.AuditLog.actor_user_id == user.id)
@@ -214,7 +269,7 @@ def delete_my_clinical_data(
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
 ):
-    cutoff = datetime.utcnow() - timedelta(days=max(days_older_than, 1))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(days_older_than, 1))
     checkins = db.query(models.DailyCheckIn).filter(
         models.DailyCheckIn.patient_id == user.id,
         models.DailyCheckIn.created_at < cutoff,
@@ -318,7 +373,7 @@ def revoke_clinician_access(
     ).all()
     for invite in invites:
         invite.status = models.InviteStatus.revoked.value
-        invite.decided_at = datetime.utcnow()
+        invite.decided_at = datetime.now(timezone.utc)
 
     audit(db, user, "revoke_clinician_access", "user", str(clinician_id))
     db.commit()
@@ -328,16 +383,20 @@ def revoke_clinician_access(
 @router.get("/invites", response_model=list[schemas.ClinicianInviteRead])
 def list_my_invites(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
     require_role(user, models.UserRole.patient.value)
+    now = datetime.now(timezone.utc)
     invites = (
         db.query(models.ClinicianPatientInvite)
         .filter(
             models.ClinicianPatientInvite.patient_id == user.id,
             models.ClinicianPatientInvite.status == models.InviteStatus.pending.value,
+            # M6: exclude expired invites (expires_at NULL = legacy row, keep visible)
+            (models.ClinicianPatientInvite.expires_at.is_(None))
+            | (models.ClinicianPatientInvite.expires_at > now),
         )
         .order_by(models.ClinicianPatientInvite.created_at.desc())
         .all()
     )
-    return [invite_read(db, invite) for invite in invites]
+    return invite_read_batch(db, invites)
 
 
 @router.post("/invites/{invite_id}/accept", response_model=schemas.ClinicianInviteRead)
@@ -356,7 +415,7 @@ def accept_clinician_invite(
         raise HTTPException(status_code=404, detail="Invite not found")
 
     invite.status = models.InviteStatus.accepted.value
-    invite.decided_at = datetime.utcnow()
+    invite.decided_at = datetime.now(timezone.utc)
 
     existing_link = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == invite.clinician_id,
@@ -388,7 +447,7 @@ def revoke_clinician_invite(
         raise HTTPException(status_code=404, detail="Invite not found")
 
     invite.status = models.InviteStatus.revoked.value
-    invite.decided_at = datetime.utcnow()
+    invite.decided_at = datetime.now(timezone.utc)
 
     link = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == invite.clinician_id,

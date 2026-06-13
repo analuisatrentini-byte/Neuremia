@@ -175,6 +175,29 @@ extension ContentView {
             }
 
             toolsGroup(title: "Acompanhamento", icon: "stethoscope", tint: .blue) {
+                // Sinais do corpo movidos da tab primária para cá — são
+                // funcionalidades opcionais de uso episódico (PPG via câmera,
+                // análise de voz, Apple Health). Ficam acessíveis sem ocupar
+                // espaço permanente na tab bar.
+                toolRow(
+                    icon: "waveform.path.ecg",
+                    label: "Sinais do corpo",
+                    subtitle: "PPG, frequência cardíaca, voz e Apple Health",
+                    destination: AnyView(
+                        NavigationStack {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 22) {
+                                    patientBodySignalsPage
+                                }
+                                .padding(20)
+                            }
+                            .background(appBackground)
+                            .navigationTitle("Sinais do corpo")
+                            .navigationBarTitleDisplayMode(.inline)
+                        }
+                    )
+                )
+
                 // M3 (UX-P0): navega diretamente ao scalesDashboard sem a
                 // tela intermediária ScaleAccessCard, eliminando 1 toque extra.
                 toolRowButton(

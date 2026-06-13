@@ -1,6 +1,10 @@
 """/clinician/* — endpoints accessible only to users with role=clinician."""
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+
+_INVITE_TTL_DAYS = 30
 
 from .. import models, schemas
 from ..database import get_db
@@ -10,7 +14,7 @@ from ..services import (
     decrypted_full_name,
     invite_read,
     patient_risk_summary_batch,
-    sent_invite_read,
+    sent_invite_read_batch,
     user_read,
 )
 
@@ -48,7 +52,11 @@ def create_clinician_invite(
     if pending is not None:
         invite = pending
     else:
-        invite = models.ClinicianPatientInvite(clinician_id=user.id, patient_id=patient.id)
+        invite = models.ClinicianPatientInvite(
+            clinician_id=user.id,
+            patient_id=patient.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=_INVITE_TTL_DAYS),
+        )
         db.add(invite)
         audit(db, user, "invite_patient", "user", str(patient.id))
         db.commit()
@@ -74,7 +82,7 @@ def list_clinician_invites(db: Session = Depends(get_db), user: models.User = De
         .order_by(models.ClinicianPatientInvite.created_at.desc())
         .all()
     )
-    return [sent_invite_read(db, invite) for invite in invites]
+    return sent_invite_read_batch(db, invites)
 
 
 @router.post("/patients", response_model=schemas.UserRead, deprecated=True)
@@ -96,15 +104,21 @@ def link_patient_deprecated(
     return user_read(db, patient, include_risk=False)
 
 
-@router.get("/patients", response_model=list[schemas.UserRead])
-def clinician_patients(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
+@router.get("/patients", response_model=schemas.PatientListResponse)
+def clinician_patients(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
     require_role(user, models.UserRole.clinician.value)
     links = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == user.id
     ).all()
     patient_ids = [link.patient_id for link in links]
+    total = len(patient_ids)
     if not patient_ids:
-        return []
+        return schemas.PatientListResponse(items=[], total=0, skip=skip, limit=limit)
     patients = db.query(models.User).filter(models.User.id.in_(patient_ids)).all()
     risk_by_patient = patient_risk_summary_batch(db, patient_ids)
     ranked_patients = []
@@ -121,4 +135,6 @@ def clinician_patients(db: Session = Depends(get_db), user: models.User = Depend
                 risk_level=level,
             )
         )
-    return sorted(ranked_patients, key=lambda patient: patient.risk_score or -1, reverse=True)
+    ranked_patients.sort(key=lambda p: p.risk_score or -1, reverse=True)
+    page = ranked_patients[skip: skip + limit]
+    return schemas.PatientListResponse(items=page, total=total, skip=skip, limit=limit)

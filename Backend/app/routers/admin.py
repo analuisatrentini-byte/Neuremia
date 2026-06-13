@@ -5,7 +5,7 @@ Use only by backend operators. Surfaces:
 - token-table cleanup (Sprint 10/14)
 - role promotion (Sprint 1)
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 @router.post("/refresh-tokens/purge", response_model=schemas.AdminPurgeResponse)
 def admin_purge_refresh_tokens(db: Session = Depends(get_db)):
     """Reaps short-lived auth records that no longer matter."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     refresh_cutoff = now - timedelta(days=1)
 
     purged_refresh = (
@@ -49,11 +49,21 @@ def admin_purge_refresh_tokens(db: Session = Depends(get_db)):
         .delete(synchronize_session=False)
     )
 
+    purged_totp = (
+        db.query(models.TotpPendingSession)
+        .filter(
+            (models.TotpPendingSession.expires_at < now)
+            | (models.TotpPendingSession.used_at.isnot(None))
+        )
+        .delete(synchronize_session=False)
+    )
+
     db.commit()
     return schemas.AdminPurgeResponse(
         deleted_refresh_tokens=purged_refresh,
         deleted_access_token_jtis=purged_jtis,
         deleted_password_reset_tokens=purged_resets,
+        deleted_totp_pending_sessions=purged_totp,
     )
 
 
@@ -65,7 +75,7 @@ def admin_revoke_sessions(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     user.token_epoch = user.token_epoch + 1
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     revoked_refresh = (
         db.query(models.RefreshToken)
         .filter(

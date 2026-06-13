@@ -6,10 +6,12 @@
 import SwiftUI
 
 extension ContentView {
+    @ToolbarContentBuilder
     var toolbarContent: some ToolbarContent {
-        // P1-3 (UX): troca de papel direto na toolbar, sem abrir Settings.
-        // Ícone badge mostra o papel ativo — clínico vê "Médico", paciente vê
-        // "Paciente". ConfirmationDialog reutiliza o mecanismo já existente.
+        // S4 (UX): role toggle só aparece para usuários com acesso clínico.
+        // Pacientes que nunca serão clínicos não precisam ver esse controle —
+        // o botão era ruído visual permanente para 95%+ dos usuários.
+        if authenticatedRole == "clinician" || activeRole == .clinician {
         ToolbarItem(placement: .topBarLeading) {
             Button {
                 roleChangePending = activeRole == .clinician ? .patient : .clinician
@@ -26,6 +28,7 @@ extension ContentView {
             }
             .tint(.primary)
             .accessibilityLabel("Perfil ativo: \(activeRole == .clinician ? "Médico" : "Paciente"). Toque para alternar.")
+        }
         }
         // Crise sempre acessível (M10) — botão vermelho próximo do polegar
         // direito em qualquer aba, abre o CrisisSupportCard na hora.
@@ -45,7 +48,7 @@ extension ContentView {
             } label: {
                 Image(systemName: "gearshape.fill")
                     .overlay(alignment: .topTrailing) {
-                        if offlineSyncQueue.count > 0 {
+                        if !offlineSyncQueue.isEmpty {
                             Circle()
                                 .fill(Color.orange)
                                 .frame(width: 8, height: 8)
@@ -56,7 +59,7 @@ extension ContentView {
             // Cor neutra (Sprint 21) — settings é navegação secundária, não
             // ação primária. SOS continua vermelho para destacar urgência.
             .tint(.primary)
-            .accessibilityLabel(offlineSyncQueue.count > 0
+            .accessibilityLabel(!offlineSyncQueue.isEmpty
                 ? "Configurações — \(offlineSyncQueue.count) item(ns) pendente(s) de sincronização"
                 : "Configurações")
         }

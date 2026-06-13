@@ -46,6 +46,7 @@ class AdminPurgeResponse(BaseModel):
     deleted_refresh_tokens: int
     deleted_access_token_jtis: int = 0
     deleted_password_reset_tokens: int = 0
+    deleted_totp_pending_sessions: int = 0
 
 
 class AdminRevokeSessionsResponse(BaseModel):
@@ -152,6 +153,34 @@ class LogoutRequest(BaseModel):
     refresh_token: str = Field(min_length=8)
 
 
+# M2 — 2FA TOTP schemas
+
+class TotpSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+
+class TotpConfirmRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class TotpVerifyRequest(BaseModel):
+    pending_session_id: str = Field(min_length=8)
+    code: str = Field(min_length=6, max_length=8)
+
+
+class LoginResponse(BaseModel):
+    """Returned by /auth/login. If requires_totp is True, the client must
+    complete the TOTP step via /auth/2fa/verify using pending_session_id.
+    When requires_totp is False the fields mirror TokenResponse."""
+    access_token: str | None = None
+    refresh_token: str | None = None
+    token_type: str = "bearer"
+    user: "UserRead | None" = None
+    requires_totp: bool = False
+    pending_session_id: str | None = None
+
+
 class LinkPatientRequest(BaseModel):
     patient_email: EmailStr
 
@@ -184,10 +213,10 @@ class DailyCheckInCreate(BaseModel):
     appetite: float = Field(ge=0, le=5)
     libido: float = Field(ge=0, le=5)
     medication_taken: bool
-    side_effects: str = ""
-    automatic_thoughts: str = ""
+    side_effects: str = Field(default="", max_length=2000)
+    automatic_thoughts: str = Field(default="", max_length=2000)
     suicidal_ideation: bool = False
-    journal_entry: str = ""
+    journal_entry: str = Field(default="", max_length=5000)
 
 
 class DailyCheckInRead(DailyCheckInCreate):
@@ -314,6 +343,7 @@ ConsentPurposeLiteral = Literal[
     "clinician_sharing",
     "caregiver_sharing",
     "research_anonymized",
+    "biometric_processing",  # M4 — local FaceID/TouchID on-device analysis
 ]
 
 
@@ -331,3 +361,10 @@ class ConsentRead(BaseModel):
     active: bool
 
     model_config = {"from_attributes": True}
+
+
+class PatientListResponse(BaseModel):
+    items: list[UserRead]
+    total: int
+    skip: int
+    limit: int

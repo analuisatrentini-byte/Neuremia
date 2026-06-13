@@ -10,7 +10,7 @@ import UIKit
 
 extension ContentView {
     func makeBackupExport(silent: Bool = false) {
-        // N-I5: single canonical format via NeuroFlowBackupSnapshot (Codable).
+        // NeuroFlowBackupSnapshot (Codable) is the canonical export/import format.
         // N-C1: PHI text fields are AES-GCM encrypted before serialisation.
         //       Email is omitted — not required to restore clinical records.
         let snapshot = NeuroFlowBackupSnapshot(
@@ -535,10 +535,13 @@ extension ContentView {
     }
 
     func restoreBackup(from data: Data) throws {
-        // N-I5: parse via the canonical NeuroFlowBackupSnapshot type.
+        // Parse via the canonical NeuroFlowBackupSnapshot type.
         // Falls back to legacy [String:Any] parsing for files produced
         // before schema v2 (missing schemaVersion key).
         if let snapshot = try? NeuroFlowBackupSnapshot.decode(from: data) {
+            guard snapshot.schemaVersion <= 2 else {
+                throw NSError(domain: "NeuroFlow", code: 1, userInfo: [NSLocalizedDescriptionKey: "Backup criado por uma versão mais recente do app. Atualize o NeuroFlow para importar este arquivo."])
+            }
             try restoreFromSnapshot(snapshot)
         } else {
             try restoreFromLegacyPayload(data)
@@ -1481,6 +1484,123 @@ extension ContentView {
         } catch {
             remotePatientStatusMessage = "Falha ao carregar dados do paciente: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - B1: PDF renderer extracted from ContentView so it can run off the main actor
+
+/// All PDF rendering work in one `nonisolated` type.
+/// Call `PDFReportRenderer.render(...)` from any `Task.detached` block —
+/// no MainActor involvement until the resulting URL is handed back.
+struct PDFReportRenderer {
+    nonisolated static func render(
+        text: String,
+        checkIns: [DailyCheckIn],
+        assessments: [ScaleAssessment],
+        medications: [MedicationPlanEntry],
+        symptoms: [CustomSymptomEntry],
+        summary: LongitudinalSummary
+    ) async -> URL? {
+        let url = FileManager.default.temporaryDirectory.appending(path: "neuroflow-relatorio.pdf")
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+
+        do {
+            try renderer.writePDF(to: url) { context in
+                context.beginPage()
+                let margin: CGFloat = 36
+                var y = margin
+                let width = pageRect.width - margin * 2
+
+                drawText("NeuroFlow", in: CGRect(x: margin, y: y, width: width, height: 34), font: .boldSystemFont(ofSize: 24), color: .black)
+                y += 34
+                drawText("Relatório para consulta", in: CGRect(x: margin, y: y, width: width, height: 22), font: .systemFont(ofSize: 14), color: .darkGray)
+                y += 30
+
+                UIColor.neuroGold.setFill()
+                context.cgContext.fill(CGRect(x: margin, y: y, width: width, height: 3))
+                y += 18
+
+                let summaryLines = [
+                    "Gerado em: \(Date().formatted(date: .abbreviated, time: .shortened))",
+                    "Risco atual: \(summary.riskLevel.rawValue)",
+                    "Registros analisados: \(summary.analyzedCheckInCount)",
+                    "Sono médio: \(String(format: "%.1f", summary.averageSleep))h",
+                    "Adesão medicamentosa: \(String(format: "%.0f", summary.medicationAdherence * 100))%"
+                ]
+
+                y = drawSection("Resumo", lines: summaryLines, x: margin, y: y, width: width)
+                y = drawTrendChart(checkIns: checkIns, x: margin, y: y + 8, width: width, context: context.cgContext)
+                y = drawSection("Sinais recentes", lines: summary.signals, x: margin, y: y + 10, width: width)
+
+                let scaleLines = assessments.prefix(6).map { "\($0.scaleName): \($0.score) pontos - \($0.interpretation)" }
+                y = drawSection("Escalas", lines: scaleLines.isEmpty ? ["Nenhuma escala salva."] : Array(scaleLines), x: margin, y: y + 10, width: width)
+
+                y = drawSection("Resumo mensal", lines: MonthlyReportSummary.lines(for: checkIns), x: margin, y: y + 10, width: width)
+
+                let medicationLines = medications.map { plan in
+                    [plan.name, plan.dose, plan.schedule, plan.prescription, plan.changeNote]
+                        .filter { !$0.isEmpty }.joined(separator: " • ")
+                }
+                y = drawSection("Medicações", lines: medicationLines.isEmpty ? ["Nenhum medicamento cadastrado."] : medicationLines, x: margin, y: y + 10, width: width)
+
+                let customSymptomLines = symptoms.map { "\($0.name): \(String(format: "%.0f", $0.value))/5" }
+                y = drawSection("Sintomas personalizados", lines: customSymptomLines.isEmpty ? ["Nenhum sintoma personalizado cadastrado."] : customSymptomLines, x: margin, y: y + 10, width: width)
+
+                let checkInLines = checkIns.prefix(8).map {
+                    "\($0.date.formatted(date: .numeric, time: .omitted)): humor \(String(format: "%.1f", $0.mood)), ansiedade \(String(format: "%.1f", $0.anxiety)), sono \(String(format: "%.1f", $0.sleepHours))h"
+                }
+                y = drawSection("Registros recentes", lines: checkInLines.isEmpty ? ["Nenhum registro salvo."] : Array(checkInLines), x: margin, y: y + 10, width: width)
+
+                _ = drawSection("Observação", lines: [
+                    "Análise automatizada de apoio. Este relatório não substitui julgamento médico, atendimento emergencial ou validação clínica formal."
+                ], x: margin, y: y + 10, width: width)
+            }
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private static func drawText(_ text: String, in rect: CGRect, font: UIFont, color: UIColor) {
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byWordWrapping
+        NSAttributedString(string: text, attributes: [
+            .font: font, .foregroundColor: color, .paragraphStyle: para
+        ]).draw(in: rect)
+    }
+
+    @discardableResult
+    private static func drawSection(_ title: String, lines: [String], x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        var cy = y
+        drawText(title, in: CGRect(x: x, y: cy, width: width, height: 22), font: .boldSystemFont(ofSize: 15), color: .black)
+        cy += 24
+        for line in lines {
+            drawText("• \(line)", in: CGRect(x: x, y: cy, width: width, height: 36), font: .systemFont(ofSize: 11), color: .darkGray)
+            cy += 28
+        }
+        return cy
+    }
+
+    private static func drawTrendChart(checkIns: [DailyCheckIn], x: CGFloat, y: CGFloat, width: CGFloat, context: CGContext) -> CGFloat {
+        drawText("Evolução visual recente", in: CGRect(x: x, y: y, width: width, height: 22), font: .boldSystemFont(ofSize: 15), color: .black)
+        let chartY = y + 28
+        let chartHeight: CGFloat = 76
+        let entries = Array(checkIns.prefix(7).reversed())
+        guard !entries.isEmpty else {
+            drawText("Sem dados suficientes para gráfico.", in: CGRect(x: x, y: chartY, width: width, height: 24), font: .systemFont(ofSize: 11), color: .darkGray)
+            return chartY + 34
+        }
+        let barWidth = min(width / CGFloat(entries.count) - 6, 36)
+        context.setFillColor(UIColor.neuroGold.cgColor)
+        for (i, entry) in entries.enumerated() {
+            let barH = CGFloat(entry.mood / 5.0) * chartHeight
+            let bx = x + CGFloat(i) * (barWidth + 6)
+            let by = chartY + chartHeight - barH
+            context.fill(CGRect(x: bx, y: by, width: barWidth, height: barH))
+        }
+        drawText("Barras amarelas: humor recente de 1 a 5.", in: CGRect(x: x, y: chartY + chartHeight + 6, width: width, height: 18), font: .systemFont(ofSize: 10), color: .darkGray)
+        return chartY + chartHeight + 28
     }
 }
 

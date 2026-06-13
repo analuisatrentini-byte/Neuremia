@@ -1,10 +1,11 @@
 """/caregivers — CRUD endpoints the patient uses to manage trusted contacts."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import current_user, require_role
+from ..rate_limit import limiter
 from ..security import encrypt_field
 from ..services import audit, caregiver_read
 
@@ -26,7 +27,9 @@ def caregivers(db: Session = Depends(get_db), user: models.User = Depends(curren
 
 
 @router.post("", response_model=schemas.CaregiverContactRead)
+@limiter.limit("20/minute")
 def create_caregiver(
+    request: Request,
     payload: schemas.CaregiverContactCreate,
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
@@ -47,7 +50,9 @@ def create_caregiver(
 
 
 @router.patch("/{caregiver_id}", response_model=schemas.CaregiverContactRead)
+@limiter.limit("20/minute")
 def update_caregiver(
+    request: Request,
     caregiver_id: int,
     payload: schemas.CaregiverContactCreate,
     db: Session = Depends(get_db),
@@ -72,7 +77,9 @@ def update_caregiver(
 
 
 @router.delete("/{caregiver_id}", response_model=schemas.MessageResponse)
+@limiter.limit("20/minute")
 def delete_caregiver(
+    request: Request,
     caregiver_id: int,
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),

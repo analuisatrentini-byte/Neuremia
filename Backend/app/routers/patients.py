@@ -35,7 +35,10 @@ def patient_checkins(
     audit(db, user, "read_patient_checkins", "daily_checkin", str(patient_id))
     checkins = (
         db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.patient_id == patient_id)
+        .filter(
+            models.DailyCheckIn.patient_id == patient_id,
+            models.DailyCheckIn.deleted_at.is_(None),
+        )
         .order_by(models.DailyCheckIn.created_at.desc())
         .all()
     )
@@ -71,7 +74,10 @@ def patient_alerts(
     audit(db, user, "read_patient_alerts", "clinical_alert", str(patient_id))
     alerts = (
         db.query(models.ClinicalAlert)
-        .filter(models.ClinicalAlert.patient_id == patient_id)
+        .filter(
+            models.ClinicalAlert.patient_id == patient_id,
+            models.ClinicalAlert.deleted_at.is_(None),
+        )
         .order_by(models.ClinicalAlert.created_at.desc())
         .all()
     )
@@ -89,7 +95,10 @@ def patient_reports(
     audit(db, user, "read_patient_reports", "clinical_report", str(patient_id))
     reports = (
         db.query(models.ClinicalReport)
-        .filter(models.ClinicalReport.patient_id == patient_id)
+        .filter(
+            models.ClinicalReport.patient_id == patient_id,
+            models.ClinicalReport.deleted_at.is_(None),
+        )
         .order_by(models.ClinicalReport.created_at.desc())
         .all()
     )
