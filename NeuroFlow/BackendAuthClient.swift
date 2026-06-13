@@ -8,6 +8,7 @@
 import Combine
 import CryptoKit
 import Foundation
+import os
 import Security
 import SwiftUI
 
@@ -44,7 +45,7 @@ enum KeychainStore {
     private static var lock = OSAllocatedUnfairLock()
 
     static func string(for key: Key) -> String? {
-        lock.withLock {
+        lock.withLock { () -> String? in
             var query = baseQuery(for: key)
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
