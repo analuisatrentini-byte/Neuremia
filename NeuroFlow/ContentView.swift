@@ -692,12 +692,14 @@ struct ContentView: View {
     @AppStorage("neuroflowCheckInReminderEnabled") private var checkInReminderEnabled = false
     @AppStorage("neuroflowMedicationReminderHour") private var medicationReminderHour = 9
     @AppStorage("neuroflowCheckInReminderHour") private var checkInReminderHour = 20
-    @AppStorage("neuroflowMedicationName") private var medicationName = ""
-    @AppStorage("neuroflowMedicationDose") private var medicationDose = ""
-    @AppStorage("neuroflowMedicationSchedule") private var medicationSchedule = ""
-    @AppStorage("neuroflowMedicationChangeNote") private var medicationChangeNote = ""
-    @AppStorage("neuroflowMedicationPrescription") private var medicationPrescription = ""
-    @AppStorage("neuroflowMedicationPlansData") private var medicationPlansData = ""
+    // PHI: medication fields are encrypted at rest via AES-GCM (DraftStore).
+    // Legacy @AppStorage values are auto-migrated on first read.
+    @EncryptedDraft("neuroflowMedicationName", defaultValue: "") private var medicationName
+    @EncryptedDraft("neuroflowMedicationDose", defaultValue: "") private var medicationDose
+    @EncryptedDraft("neuroflowMedicationSchedule", defaultValue: "") private var medicationSchedule
+    @EncryptedDraft("neuroflowMedicationChangeNote", defaultValue: "") private var medicationChangeNote
+    @EncryptedDraft("neuroflowMedicationPrescription", defaultValue: "") private var medicationPrescription
+    @EncryptedDraft("neuroflowMedicationPlansData", defaultValue: "") private var medicationPlansData
     @AppStorage("neuroflowCustomSymptomName") private var customSymptomName = ""
     @AppStorage("neuroflowCustomSymptomValue") private var customSymptomValue = 3.0
     @AppStorage("neuroflowCustomSymptomsData") private var customSymptomsData = ""
@@ -5255,17 +5257,18 @@ struct ContentView: View {
     static func backendLevelToClinical(_ level: String) -> ClinicalRiskLevel {
         switch level.lowercased() {
         case "high", "critical", "urgent":
-            .high
+            return .high
         case "moderate", "medium":
-            .moderate
+            return .moderate
         case "low", "minimal", "normal":
-            .low
+            return .low
         default:
-            // Unknown severity from the backend (e.g. a future "critical"
-            // tier) MUST NOT be silently downgraded to .low. Treat it as
-            // moderate so the patient/clinician is at least nudged to
-            // review it manually.
-            .moderate
+            // Unknown severity from the backend (e.g. a future tier not yet
+            // reflected here) MUST NOT be silently downgraded to .low. Treat
+            // it as moderate so the patient/clinician is at least nudged to
+            // review it manually. Log so the team knows to add a case.
+            assertionFailure("backendLevelToClinical: unrecognised level '\(level)' — add a case")
+            return .moderate
         }
     }
 
