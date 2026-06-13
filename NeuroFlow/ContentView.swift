@@ -728,6 +728,7 @@ struct ContentView: View {
     // The backup file is written directly to BackupStore.protectedFileURL.
     @AppStorage("neuroflowOfflineSyncQueueData") private var offlineSyncQueueData = ""
     @AppStorage("neuroflowLastSyncStatus") private var lastSyncStatus = "Salvo no aparelho"
+    @AppStorage("neuroflowBiometricConsentAccepted") private var biometricConsentAccepted = false
     @AppStorage("neuroflowPrivacyRetentionDays") private var privacyRetentionDays = 365
     @State private var privacyStatusMessage = ""
     @State private var privacyExportURL: URL?
@@ -2622,6 +2623,31 @@ struct ContentView: View {
 
             BodySignalsIntroCard()
 
+            if !biometricConsentAccepted {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Consentimento necessário", systemImage: "hand.raised.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.orange)
+
+                    Text("A coleta de sinais biométricos (frequência cardíaca, variabilidade de voz) requer seu consentimento específico. Esses dados são processados localmente no aparelho e não são enviados ao servidor sem sua autorização explícita.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        biometricConsentAccepted = true
+                    } label: {
+                        Text("Concordar e ativar sinais biométricos")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .accessibilityHint("Consente com a coleta local de sinais de câmera e microfone para análise de bem-estar.")
+                }
+                .padding(14)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            } else {
             BodySignalsReadingCard(
                 heartRate: ppgManager.heartRate,
                 hrv: ppgManager.hrv,
@@ -2703,6 +2729,19 @@ struct ContentView: View {
             )
 
             BodySignalsLimitationsCard()
+
+            Button(role: .destructive) {
+                ppgManager.stop()
+                voiceManager.stop()
+                biometricConsentAccepted = false
+            } label: {
+                Label("Revogar consentimento de biossensores", systemImage: "hand.raised.slash.fill")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.secondary)
+            } // end biometricConsentAccepted else
         }
     }
 
@@ -3689,6 +3728,34 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             .disabled(authToken.isEmpty)
+
+            Divider()
+
+            // LGPD Art. 9 § 1 — consentimento para dados biométricos deve ser
+            // destacado, específico e revogável a qualquer momento.
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sinais biométricos (câmera e voz)")
+                        .font(.subheadline.weight(.semibold))
+                    Text(biometricConsentAccepted ? "Consentimento ativo — processamento local." : "Consentimento não concedido.")
+                        .font(.caption)
+                        .foregroundStyle(biometricConsentAccepted ? .green : .secondary)
+                }
+                Spacer()
+                if biometricConsentAccepted {
+                    Button(role: .destructive) {
+                        ppgManager.stop()
+                        voiceManager.stop()
+                        biometricConsentAccepted = false
+                    } label: {
+                        Text("Revogar")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+            }
+            .accessibilityElement(children: .combine)
 
             Button(role: .destructive) {
                 isConfirmingAccountDelete = true
