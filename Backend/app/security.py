@@ -114,7 +114,7 @@ def generate_refresh_token() -> tuple[str, str, datetime]:
     the raw value is returned to the caller exactly once."""
     raw = _secrets.token_urlsafe(48)
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     return raw, digest, expires_at
 
 

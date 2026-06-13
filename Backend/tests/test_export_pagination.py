@@ -10,7 +10,7 @@ Validates that:
 
 import pytest
 
-from .conftest import login, register
+from .conftest import grant_consent, login, register
 
 
 def _bearer(token: str) -> dict:
@@ -34,9 +34,10 @@ def test_export_returns_all_fields(client):
     alerts, reports, audit_logs, notification_logs keys."""
     register(client, email="export_fields@test.com")
     token = login(client, email="export_fields@test.com")
-    client.post("/checkins", json=CHECKIN_A, headers=_bearer(token))
+    grant_consent(client, token=token)
+    client.post("/v1/checkins", json=CHECKIN_A, headers=_bearer(token))
 
-    resp = client.get("/me/export", headers=_bearer(token))
+    resp = client.get("/v1/me/export", headers=_bearer(token))
     assert resp.status_code == 200
     data = resp.json()
 
@@ -54,7 +55,7 @@ def test_export_invalid_date_range_returns_422(client):
     token = login(client, email="export_422@test.com")
 
     resp = client.get(
-        "/me/export",
+        "/v1/me/export",
         params={
             "from_date": "2026-12-31T00:00:00",
             "to_date": "2026-01-01T00:00:00",
@@ -70,17 +71,18 @@ def test_export_from_date_filters_older_records(client, monkeypatch):
 
     register(client, email="export_from@test.com")
     token = login(client, email="export_from@test.com")
+    grant_consent(client, token=token)
 
     # Post two check-ins; we'll set from_date to a value that should exclude
     # the first one via the DB query. Since we can't control exact timestamps
     # in the test DB, we verify the filter itself is applied by checking that
     # an impossible future date returns zero check-ins.
-    client.post("/checkins", json=CHECKIN_A, headers=_bearer(token))
-    client.post("/checkins", json=CHECKIN_B, headers=_bearer(token))
+    client.post("/v1/checkins", json=CHECKIN_A, headers=_bearer(token))
+    client.post("/v1/checkins", json=CHECKIN_B, headers=_bearer(token))
 
     future = "2099-01-01T00:00:00"
     resp = client.get(
-        "/me/export",
+        "/v1/me/export",
         params={"from_date": future},
         headers=_bearer(token),
     )
@@ -95,11 +97,12 @@ def test_export_to_date_filters_newer_records(client):
     """Check-ins created after to_date must be excluded."""
     register(client, email="export_to@test.com")
     token = login(client, email="export_to@test.com")
-    client.post("/checkins", json=CHECKIN_C, headers=_bearer(token))
+    grant_consent(client, token=token)
+    client.post("/v1/checkins", json=CHECKIN_C, headers=_bearer(token))
 
     past = "2000-01-01T00:00:00"
     resp = client.get(
-        "/me/export",
+        "/v1/me/export",
         params={"to_date": past},
         headers=_bearer(token),
     )
@@ -114,12 +117,13 @@ def test_export_no_filter_returns_checkins(client):
     """Without date filters, all posted check-ins are returned (up to the cap)."""
     register(client, email="export_nofilter@test.com")
     token = login(client, email="export_nofilter@test.com")
+    grant_consent(client, token=token)
 
     for checkin in (CHECKIN_A, CHECKIN_B, CHECKIN_C):
-        resp = client.post("/checkins", json=checkin, headers=_bearer(token))
+        resp = client.post("/v1/checkins", json=checkin, headers=_bearer(token))
         assert resp.status_code == 200
 
-    resp = client.get("/me/export", headers=_bearer(token))
+    resp = client.get("/v1/me/export", headers=_bearer(token))
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["checkins"]) == 3, (
@@ -141,9 +145,9 @@ def test_export_audit_log_records_action(client):
     token = login(client, email="export_audit@test.com")
 
     # First export creates the audit entry.
-    client.get("/me/export", headers=_bearer(token))
+    client.get("/v1/me/export", headers=_bearer(token))
     # Second export — the first entry is now visible in the audit_logs query.
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
 
     audit_actions = [entry["action"] for entry in export["audit_logs"]]
     export_count = audit_actions.count("export_account")

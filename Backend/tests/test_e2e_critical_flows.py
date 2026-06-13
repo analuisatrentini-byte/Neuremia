@@ -13,7 +13,7 @@ import datetime
 
 import pytest
 
-from .conftest import login, promote_to_clinician, register
+from .conftest import grant_consent, login, promote_to_clinician, register
 
 
 def _bearer(token: str) -> dict:
@@ -62,15 +62,16 @@ def test_patient_register_login_checkin_auditlog(client):
     assert reg["access_token"]
 
     token = login(client, email="flow1@example.com")
+    grant_consent(client, token=token)
 
     # Create a check-in
-    resp = client.post("/checkins", json=NORMAL_CHECKIN, headers=_bearer(token))
+    resp = client.post("/v1/checkins", json=NORMAL_CHECKIN, headers=_bearer(token))
     assert resp.status_code == 200
     checkin_id = resp.json()["id"]
     assert checkin_id > 0
 
     # Export must include the check-in
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     assert any(ci["id"] == checkin_id for ci in export["checkins"])
 
     # create_checkin must appear in audit trail
@@ -88,15 +89,16 @@ def test_multiple_checkins_are_stored_independently(client):
     Both records must appear in the patient's export."""
     register(client, email="multi_checkin@example.com")
     token = login(client, email="multi_checkin@example.com")
+    grant_consent(client, token=token)
 
-    first = client.post("/checkins", json=NORMAL_CHECKIN, headers=_bearer(token))
+    first = client.post("/v1/checkins", json=NORMAL_CHECKIN, headers=_bearer(token))
     assert first.status_code == 200
 
     updated = {**NORMAL_CHECKIN, "mood": 5, "journal_entry": "segundo registro"}
-    second = client.post("/checkins", json=updated, headers=_bearer(token))
+    second = client.post("/v1/checkins", json=updated, headers=_bearer(token))
     assert second.status_code == 200
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     assert len(export["checkins"]) == 2
     moods = {ci["mood"] for ci in export["checkins"]}
     assert moods == {4.0, 5.0}
@@ -112,7 +114,8 @@ def test_clinician_link_and_data_access(client, admin_api_key):
     # Setup patient
     patient_data = register(client, email="patient2@example.com")
     patient_token = login(client, email="patient2@example.com")
-    client.post("/checkins", json=NORMAL_CHECKIN, headers=_bearer(patient_token))
+    grant_consent(client, token=patient_token)
+    client.post("/v1/checkins", json=NORMAL_CHECKIN, headers=_bearer(patient_token))
 
     # Setup clinician
     clinician_data = register(client, email="clinician2@example.com", full_name="Dr. Test")
@@ -123,14 +126,14 @@ def test_clinician_link_and_data_access(client, admin_api_key):
 
     # Before link: clinician must NOT see patient data
     pre = client.get(
-        f"/patients/{patient_id}/checkins",
+        f"/v1/patients/{patient_id}/checkins",
         headers=_bearer(clinician_token),
     )
     assert pre.status_code == 403
 
     # Clinician invites patient (correct flow: clinician sends, patient accepts)
     invite_resp = client.post(
-        "/clinician/invites",
+        "/v1/clinician/invites",
         json={"patient_email": "patient2@example.com"},
         headers=_bearer(clinician_token),
     )
@@ -139,14 +142,14 @@ def test_clinician_link_and_data_access(client, admin_api_key):
 
     # Patient accepts
     accept = client.post(
-        f"/me/invites/{invite_id}/accept",
+        f"/v1/me/invites/{invite_id}/accept",
         headers=_bearer(patient_token),
     )
     assert accept.status_code == 200
 
     # After link: clinician CAN read patient check-ins
     post = client.get(
-        f"/patients/{patient_id}/checkins",
+        f"/v1/patients/{patient_id}/checkins",
         headers=_bearer(clinician_token),
     )
     assert post.status_code == 200
@@ -154,7 +157,7 @@ def test_clinician_link_and_data_access(client, admin_api_key):
 
     # Access is recorded in the clinician's own audit log
     # (actor_user_id = clinician — not the patient)
-    clinician_audit = client.get("/me/audit-logs", headers=_bearer(clinician_token)).json()
+    clinician_audit = client.get("/v1/me/audit-logs", headers=_bearer(clinician_token)).json()
     assert any(
         entry["action"] == "read_patient_checkins"
         and entry["resource_id"] == str(patient_id)
@@ -166,18 +169,19 @@ def test_unlinked_clinician_cannot_access_patient(client, admin_api_key):
     """A clinician with no link to a patient receives 403 on all PHI endpoints."""
     patient_data = register(client, email="isolated_patient@example.com")
     patient_token = login(client, email="isolated_patient@example.com")
+    grant_consent(client, token=patient_token)
     patient_id = patient_data["user"]["id"]
-    client.post("/checkins", json=NORMAL_CHECKIN, headers=_bearer(patient_token))
+    client.post("/v1/checkins", json=NORMAL_CHECKIN, headers=_bearer(patient_token))
 
     other = register(client, email="other_clinician@example.com")
     promote_to_clinician(client, user_id=other["user"]["id"], admin_key=admin_api_key)
     other_token = login(client, email="other_clinician@example.com")
 
     for endpoint in [
-        f"/patients/{patient_id}/checkins",
-        f"/patients/{patient_id}/assessments",
-        f"/patients/{patient_id}/alerts",
-        f"/patients/{patient_id}/reports",
+        f"/v1/patients/{patient_id}/checkins",
+        f"/v1/patients/{patient_id}/assessments",
+        f"/v1/patients/{patient_id}/alerts",
+        f"/v1/patients/{patient_id}/reports",
     ]:
         resp = client.get(endpoint, headers=_bearer(other_token))
         assert resp.status_code == 403, f"{endpoint} should be 403 for unlinked clinician"
@@ -192,6 +196,7 @@ def test_high_risk_checkin_creates_alert_visible_to_linked_clinician(client, adm
     """suicidal_ideation=True must create a ClinicalAlert accessible to the linked clinician."""
     patient_data = register(client, email="highrisk@example.com")
     patient_token = login(client, email="highrisk@example.com")
+    grant_consent(client, token=patient_token)
     patient_id = patient_data["user"]["id"]
 
     clinician_data = register(client, email="clinician_hr@example.com", full_name="Dr. Risk")
@@ -200,23 +205,23 @@ def test_high_risk_checkin_creates_alert_visible_to_linked_clinician(client, adm
 
     # Link: clinician invites patient, patient accepts
     invite = client.post(
-        "/clinician/invites",
+        "/v1/clinician/invites",
         json={"patient_email": "highrisk@example.com"},
         headers=_bearer(clinician_token),
     )
     assert invite.status_code == 200
     client.post(
-        f"/me/invites/{invite.json()['id']}/accept",
+        f"/v1/me/invites/{invite.json()['id']}/accept",
         headers=_bearer(patient_token),
     )
 
     # Patient submits high-risk check-in
-    resp = client.post("/checkins", json=HIGH_RISK_CHECKIN, headers=_bearer(patient_token))
+    resp = client.post("/v1/checkins", json=HIGH_RISK_CHECKIN, headers=_bearer(patient_token))
     assert resp.status_code == 200
 
     # Alert must exist and be visible to linked clinician
     alerts = client.get(
-        f"/patients/{patient_id}/alerts",
+        f"/v1/patients/{patient_id}/alerts",
         headers=_bearer(clinician_token),
     )
     assert alerts.status_code == 200
@@ -227,7 +232,7 @@ def test_high_risk_checkin_creates_alert_visible_to_linked_clinician(client, adm
     assert "high" in levels, f"Expected a high-level alert, got levels: {levels}"
 
     # Audit log must record the clinician reading alerts (stored under clinician's actor_user_id)
-    clinician_audit = client.get("/me/audit-logs", headers=_bearer(clinician_token)).json()
+    clinician_audit = client.get("/v1/me/audit-logs", headers=_bearer(clinician_token)).json()
     assert any(
         entry["action"] == "read_patient_alerts"
         for entry in clinician_audit
@@ -238,7 +243,8 @@ def test_high_risk_suicidal_flag_stored_on_checkin(client):
     """suicidal_ideation is persisted and returned in the export, not silently dropped."""
     register(client, email="suicidal_flag@example.com")
     token = login(client, email="suicidal_flag@example.com")
-    client.post("/checkins", json=HIGH_RISK_CHECKIN, headers=_bearer(token))
+    grant_consent(client, token=token)
+    client.post("/v1/checkins", json=HIGH_RISK_CHECKIN, headers=_bearer(token))
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     assert export["checkins"][0]["suicidal_ideation"] is True

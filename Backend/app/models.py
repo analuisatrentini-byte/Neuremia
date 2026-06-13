@@ -22,7 +22,7 @@ class User(Base):
     # Sprint B / LGPD: armazenado encriptado (Fernet). 512 chars cobrem nomes
     # longos após Fernet (ciphertext ~140 bytes pra strings curtas).
     full_name: Mapped[str] = mapped_column(String(512))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # Incremented every time the user wants every existing JWT killed:
     # password reset, admin-driven session revocation, account compromise
     # response (Sprint 15 / S47). Any access token presenting an `epoch`
@@ -37,7 +37,7 @@ class User(Base):
     failed_login_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # M2 — TOTP 2FA. Secret is stored Fernet-encrypted; NULL means 2FA not enrolled.
     totp_secret_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -66,7 +66,7 @@ class ClinicianPatientLink(Base):
     patient_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class InviteStatus(str, Enum):
@@ -97,10 +97,10 @@ class ClinicianPatientInvite(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     status: Mapped[str] = mapped_column(String(16), default=InviteStatus.pending.value)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # M6 — TTL 30 days for pending invites; NULL means no expiry (accepted/revoked rows).
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class CaregiverContact(Base):
@@ -116,7 +116,7 @@ class CaregiverContact(Base):
     contact: Mapped[str] = mapped_column(String(512))
     relationship: Mapped[str] = mapped_column(String(128), default="")
     share_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class DailyCheckIn(Base):
@@ -130,10 +130,10 @@ class DailyCheckIn(Base):
     patient_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # B6 — soft delete: NULL = active, non-NULL = deleted. Hard DELETE is never
     # used so clinical history is retained for audit (LGPD Art. 37).
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     mood: Mapped[float] = mapped_column(Float)
     anxiety: Mapped[float] = mapped_column(Float)
     energy: Mapped[float] = mapped_column(Float)
@@ -160,7 +160,7 @@ class ScaleAssessment(Base):
     patient_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     scale_name: Mapped[str] = mapped_column(String(32))
     answers_json: Mapped[str] = mapped_column(Text)
     score: Mapped[int] = mapped_column(Integer)
@@ -180,9 +180,9 @@ class ClinicalAlert(Base):
     patient_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # B6 — soft delete
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     level: Mapped[str] = mapped_column(String(32))
     title: Mapped[str] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text)
@@ -196,9 +196,9 @@ class ClinicalReport(Base):
     patient_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # B6 — soft delete
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     risk_level: Mapped[str] = mapped_column(String(32))
     summary: Mapped[str] = mapped_column(Text)
 
@@ -213,7 +213,7 @@ class DeviceToken(Base):
     )
     token: Mapped[str] = mapped_column(String(512), index=True)
     platform: Mapped[str] = mapped_column(String(32), default="ios")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class NotificationLog(Base):
@@ -228,7 +228,7 @@ class NotificationLog(Base):
     event_type: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32))
     detail: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class RevokedAccessToken(Base):
@@ -239,8 +239,8 @@ class RevokedAccessToken(Base):
     __tablename__ = "revoked_access_tokens"
 
     jti: Mapped[str] = mapped_column(String(64), primary_key=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    revoked_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class PasswordResetToken(Base):
@@ -256,9 +256,9 @@ class PasswordResetToken(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RefreshToken(Base):
@@ -277,9 +277,9 @@ class RefreshToken(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ConsentPurpose(str, Enum):
@@ -307,8 +307,8 @@ class Consent(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     purpose: Mapped[str] = mapped_column(String(64))
-    granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Versão textual da política aceita no momento do consentimento — permite
     # auditar EXATAMENTE qual texto o usuário viu (LGPD Art. 8 §6º).
     policy_version: Mapped[str] = mapped_column(String(32), default="")
@@ -326,7 +326,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(255))
     resource_type: Mapped[str] = mapped_column(String(128))
     resource_id: Mapped[str] = mapped_column(String(128))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class RiskCache(Base):
@@ -340,7 +340,7 @@ class RiskCache(Base):
     )
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     risk_level: Mapped[str] = mapped_column(String(32), default="low")
-    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class TotpPendingSession(Base):
@@ -354,5 +354,5 @@ class TotpPendingSession(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     session_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

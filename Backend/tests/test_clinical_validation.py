@@ -62,13 +62,14 @@ PHQ9_CASES = [
 @pytest.mark.parametrize("answers,expected_score,expected_band", PHQ9_CASES)
 def test_phq9_scoring_via_api(client, answers, expected_score, expected_band):
     """PHQ-9 scores submitted to the backend must match gold-standard values."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     reg = register(client, email=f"phq9val_{expected_score}_{expected_band[:3]}@test.com")
     token = login(client, email=f"phq9val_{expected_score}_{expected_band[:3]}@test.com")
+    grant_consent(client, token=token)
 
     resp = client.post(
-        "/assessments",
+        "/v1/assessments",
         json={
             "scale_name": "PHQ-9",
             "answers": answers,
@@ -93,12 +94,13 @@ def test_phq9_item9_positive_creates_high_alert(client):
     """A PHQ-9 submission with item 9 (suicidal ideation) > 0 must be stored
     and an alert visible to a linked clinician must be created when a high-risk
     check-in is also submitted. Verifies full audit trail."""
-    from .conftest import login, promote_to_clinician, register
+    from .conftest import grant_consent, login, promote_to_clinician, register
 
     admin_key = __import__("os").environ["NEUROFLOW_ADMIN_API_KEY"]
 
     patient = register(client, email="phq9_item9@test.com")
     patient_token = login(client, email="phq9_item9@test.com")
+    grant_consent(client, token=patient_token)
     patient_id = patient["user"]["id"]
 
     clinician = register(client, email="phq9_clinician@test.com", full_name="Dr. PHQ9")
@@ -107,19 +109,19 @@ def test_phq9_item9_positive_creates_high_alert(client):
 
     # Link: clinician invites, patient accepts
     inv = client.post(
-        "/clinician/invites",
+        "/v1/clinician/invites",
         json={"patient_email": "phq9_item9@test.com"},
         headers=_bearer(clinician_token),
     )
     assert inv.status_code == 200
-    client.post(f"/me/invites/{inv.json()['id']}/accept", headers=_bearer(patient_token))
+    client.post(f"/v1/me/invites/{inv.json()['id']}/accept", headers=_bearer(patient_token))
 
     # PHQ-9 with item 9 = 3 (suicidal ideation nearly every day)
     answers_item9_max = [1, 1, 1, 1, 1, 1, 1, 1, 3]
     score = sum(answers_item9_max)  # = 11
 
     resp = client.post(
-        "/assessments",
+        "/v1/assessments",
         json={
             "scale_name": "PHQ-9",
             "answers": answers_item9_max,
@@ -160,14 +162,15 @@ GAD7_CASES = [
 @pytest.mark.parametrize("answers,expected_score,expected_band", GAD7_CASES)
 def test_gad7_scoring_via_api(client, answers, expected_score, expected_band):
     """GAD-7 scores submitted to the backend must match gold-standard values."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     tag = f"{expected_score}_{expected_band[:3]}"
     register(client, email=f"gad7val_{tag}@test.com")
     token = login(client, email=f"gad7val_{tag}@test.com")
+    grant_consent(client, token=token)
 
     resp = client.post(
-        "/assessments",
+        "/v1/assessments",
         json={
             "scale_name": "GAD-7",
             "answers": answers,
@@ -206,14 +209,15 @@ YMRS_CASES = [
 @pytest.mark.parametrize("answers,expected_score,expected_band", YMRS_CASES)
 def test_ymrs_scoring_via_api(client, answers, expected_score, expected_band):
     """YMRS scores submitted to the backend must match gold-standard values."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     tag = f"{expected_score}_{expected_band[:3]}"
     register(client, email=f"ymrsval_{tag}@test.com")
     token = login(client, email=f"ymrsval_{tag}@test.com")
+    grant_consent(client, token=token)
 
     resp = client.post(
-        "/assessments",
+        "/v1/assessments",
         json={
             "scale_name": "YMRS",
             "answers": answers,
@@ -372,21 +376,22 @@ def test_risk_unacknowledged_alert_contributes():
 
 def test_phq9_answers_round_trip(client):
     """All 9 PHQ-9 answer values must survive a POST → export round-trip."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     register(client, email="roundtrip@test.com")
     token = login(client, email="roundtrip@test.com")
+    grant_consent(client, token=token)
 
     original_answers = [3, 2, 1, 2, 3, 0, 1, 2, 3]
     score = sum(original_answers)
 
     client.post(
-        "/assessments",
+        "/v1/assessments",
         json={"scale_name": "PHQ-9", "answers": original_answers, "score": score, "interpretation": "Grave"},
         headers=_bearer(token),
     )
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     stored_assessment = next(
         (a for a in export["assessments"] if a["scale_name"] == "PHQ-9"), None
     )
@@ -399,21 +404,22 @@ def test_phq9_answers_round_trip(client):
 
 def test_gad7_answers_round_trip(client):
     """All 7 GAD-7 answer values must survive a POST → export round-trip."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     register(client, email="gad7rt@test.com")
     token = login(client, email="gad7rt@test.com")
+    grant_consent(client, token=token)
 
     original_answers = [3, 3, 2, 2, 1, 1, 0]
     score = sum(original_answers)
 
     client.post(
-        "/assessments",
+        "/v1/assessments",
         json={"scale_name": "GAD-7", "answers": original_answers, "score": score, "interpretation": "Grave"},
         headers=_bearer(token),
     )
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     stored = next((a for a in export["assessments"] if a["scale_name"] == "GAD-7"), None)
     assert stored is not None
     assert stored["answers"] == original_answers
@@ -422,21 +428,22 @@ def test_gad7_answers_round_trip(client):
 
 def test_ymrs_answers_round_trip(client):
     """All 11 YMRS answer values must survive a POST → export round-trip."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     register(client, email="ymrsrt@test.com")
     token = login(client, email="ymrsrt@test.com")
+    grant_consent(client, token=token)
 
     original_answers = [4, 3, 2, 3, 8, 4, 3, 4, 4, 2, 3]
     score = sum(original_answers)
 
     client.post(
-        "/assessments",
+        "/v1/assessments",
         json={"scale_name": "YMRS", "answers": original_answers, "score": score, "interpretation": "Marcado a grave"},
         headers=_bearer(token),
     )
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     stored = next((a for a in export["assessments"] if a["scale_name"] == "YMRS"), None)
     assert stored is not None
     assert stored["answers"] == original_answers
@@ -450,13 +457,14 @@ def test_ymrs_answers_round_trip(client):
 def test_high_risk_checkin_triggers_clinical_alert_via_api(client):
     """A check-in with suicidal_ideation=True must create a high-level
     ClinicalAlert and that alert must persist in the patient's export."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     register(client, email="alert_trigger@test.com")
     token = login(client, email="alert_trigger@test.com")
+    grant_consent(client, token=token)
 
     resp = client.post(
-        "/checkins",
+        "/v1/checkins",
         json={
             "mood": 1, "anxiety": 5, "energy": 1, "irritability": 4,
             "sleep_hours": 3, "appetite": 1, "libido": 0,
@@ -468,20 +476,20 @@ def test_high_risk_checkin_triggers_clinical_alert_via_api(client):
     )
     assert resp.status_code == 200
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     high_alerts = [a for a in export["alerts"] if a["level"] == "high"]
     assert high_alerts, "suicidal_ideation=True must produce a high-level alert"
 
 
 def test_normal_checkin_does_not_trigger_alert(client):
     """A normal check-in must NOT generate a clinical alert."""
-    from .conftest import login, register
+    from .conftest import grant_consent, login, register
 
     register(client, email="no_alert@test.com")
     token = login(client, email="no_alert@test.com")
 
     client.post(
-        "/checkins",
+        "/v1/checkins",
         json={
             "mood": 4, "anxiety": 1, "energy": 4, "irritability": 1,
             "sleep_hours": 8, "appetite": 4, "libido": 3,
@@ -492,7 +500,7 @@ def test_normal_checkin_does_not_trigger_alert(client):
         headers=_bearer(token),
     )
 
-    export = client.get("/me/export", headers=_bearer(token)).json()
+    export = client.get("/v1/me/export", headers=_bearer(token)).json()
     assert export["alerts"] == [], (
         f"Normal check-in must not create alerts, got: {export['alerts']}"
     )

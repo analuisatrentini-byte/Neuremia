@@ -1,5 +1,5 @@
 """Sprint 15 — per-user epoch revocation + admin force-logout + CASCADE FKs."""
-from .conftest import login, register
+from .conftest import grant_consent, login, register
 
 
 def _bearer(token: str) -> dict:
@@ -24,11 +24,11 @@ def test_password_reset_revokes_existing_access_token(client, monkeypatch):
     stolen_access = user["access_token"]
 
     # Token works before reset.
-    assert client.get("/me", headers=_bearer(stolen_access)).status_code == 200
+    assert client.get("/v1/me", headers=_bearer(stolen_access)).status_code == 200
 
-    client.post("/auth/password-reset", json={"email": "reset-revoke@example.com"})
+    client.post("/v1/auth/password-reset", json={"email": "reset-revoke@example.com"})
     confirm = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "reset-revoke@example.com",
             "reset_code": captured["code"],
@@ -39,7 +39,7 @@ def test_password_reset_revokes_existing_access_token(client, monkeypatch):
 
     # Stolen access token must be rejected now even though its TTL is far
     # from elapsed.
-    forbidden = client.get("/me", headers=_bearer(stolen_access))
+    forbidden = client.get("/v1/me", headers=_bearer(stolen_access))
     assert forbidden.status_code == 401
 
 
@@ -58,9 +58,9 @@ def test_password_reset_bumps_token_epoch(client, monkeypatch):
         user = session.query(models.User).filter_by(email="epoch@example.com").first()
         epoch_before = user.token_epoch
 
-    client.post("/auth/password-reset", json={"email": "epoch@example.com"})
+    client.post("/v1/auth/password-reset", json={"email": "epoch@example.com"})
     client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "epoch@example.com",
             "reset_code": captured["code"],
@@ -82,7 +82,7 @@ def test_admin_revoke_sessions_kills_active_tokens(client, admin_api_key):
     user_id = user["user"]["id"]
 
     response = client.post(
-        f"/admin/users/{user_id}/revoke-sessions",
+        f"/v1/admin/users/{user_id}/revoke-sessions",
         headers={"X-Admin-API-Key": admin_api_key},
     )
     assert response.status_code == 200
@@ -91,18 +91,18 @@ def test_admin_revoke_sessions_kills_active_tokens(client, admin_api_key):
     assert body["revoked_refresh_tokens"] == 1
 
     # Access JWT now fails (token_epoch=0 < user.token_epoch=1).
-    me = client.get("/me", headers=_bearer(access))
+    me = client.get("/v1/me", headers=_bearer(access))
     assert me.status_code == 401
 
     # Refresh token also fails (was revoked).
-    rotation = client.post("/auth/refresh", json={"refresh_token": refresh})
+    rotation = client.post("/v1/auth/refresh", json={"refresh_token": refresh})
     assert rotation.status_code == 401
 
 
 def test_admin_revoke_sessions_requires_admin_key(client):
     register(client, email="protected@example.com")
     response = client.post(
-        "/admin/users/1/revoke-sessions",
+        "/v1/admin/users/1/revoke-sessions",
         headers={"X-Admin-API-Key": "nope"},
     )
     assert response.status_code == 401
@@ -110,7 +110,7 @@ def test_admin_revoke_sessions_requires_admin_key(client):
 
 def test_admin_revoke_sessions_404_for_unknown_user(client, admin_api_key):
     response = client.post(
-        "/admin/users/9999/revoke-sessions",
+        "/v1/admin/users/9999/revoke-sessions",
         headers={"X-Admin-API-Key": admin_api_key},
     )
     assert response.status_code == 404
@@ -125,13 +125,14 @@ def test_delete_my_account_cascades_through_all_user_tables(client):
 
     register(client, email="cascade@example.com")
     token = login(client, email="cascade@example.com")
+    grant_consent(client, token=token)
     user_id = (
-        client.get("/me", headers=_bearer(token)).json()["id"]
+        client.get("/v1/me", headers=_bearer(token)).json()["id"]
     )
 
     # Generate some children rows across the tables we care about.
     client.post(
-        "/checkins",
+        "/v1/checkins",
         json={
             "mood": 3,
             "anxiety": 2,
@@ -149,12 +150,12 @@ def test_delete_my_account_cascades_through_all_user_tables(client):
         headers=_bearer(token),
     )
     client.post(
-        "/caregivers",
+        "/v1/caregivers",
         json={"name": "Mãe", "contact": "mae@example.com", "relationship": "mãe", "share_enabled": True},
         headers=_bearer(token),
     )
 
-    delete = client.delete("/me", headers=_bearer(token))
+    delete = client.delete("/v1/me", headers=_bearer(token))
     assert delete.status_code == 200
 
     with database.SessionLocal() as session:

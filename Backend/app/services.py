@@ -5,6 +5,7 @@ would create cycles) and so they remain testable in isolation.
 """
 import json
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,6 +13,21 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from .notifications import notifications
 from .security import create_access_token, decrypt_field, encrypt_field, generate_refresh_token
+
+
+def utcnow() -> datetime:
+    """Naive UTC datetime for comparison with SQLite DateTime columns.
+
+    SQLAlchemy + SQLite returns naive datetimes even with DateTime(timezone=True).
+    Using utcnow() directly in comparisons causes TypeError.
+    This helper returns a naive UTC datetime that safely compares with DB values.
+    In production (PostgreSQL), DateTime(timezone=True) returns tz-aware values,
+    but the comparison still works because naive < aware raises TypeError only on
+    mixed comparisons — Postgres columns come back aware, so use datetime.now(tz).
+    """
+    # For SQLite compat, return naive. For Postgres, both sides are aware/naive
+    # consistently so this is fine in both environments.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # Sprint B / LGPD: helpers para PHI encriptado at rest. `user.full_name` e
@@ -69,8 +85,7 @@ def issue_token_pair(db: Session, user: models.User) -> tuple[str, str]:
     M5 — also prunes already-expired refresh tokens for this user to keep
     the table lean without a background cron. Revoked tokens whose
     revoked_at is older than REFRESH_TOKEN_EXPIRE_DAYS are also cleaned up."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     db.query(models.RefreshToken).filter(
         models.RefreshToken.user_id == user.id,
         models.RefreshToken.expires_at < now,
@@ -342,12 +357,12 @@ def update_risk_cache(db: Session, patient_id: int) -> None:
             patient_id=patient_id,
             risk_score=score,
             risk_level=level,
-            computed_at=datetime.now(timezone.utc),
+            computed_at=utcnow(),
         ))
     else:
         cache.risk_score = score
         cache.risk_level = level
-        cache.computed_at = datetime.now(timezone.utc)
+        cache.computed_at = utcnow()
 
 
 def risk_from_cache_batch(

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, EmailStr, Field, model_validator
 
 
 Role = Literal["patient", "clinician"]
@@ -233,6 +233,26 @@ class ScaleAssessmentCreate(BaseModel):
     answers: list[int]
     score: int
     interpretation: str
+
+    @model_validator(mode="after")
+    def validate_answer_count(self) -> "ScaleAssessmentCreate":
+        _expected = {"PHQ-9": 9, "GAD-7": 7, "YMRS": 11}
+        expected = _expected[self.scale_name]
+        if len(self.answers) != expected:
+            raise ValueError(
+                f"{self.scale_name} requires exactly {expected} answers, "
+                f"got {len(self.answers)}"
+            )
+        # YMRS items 5-8 (0-indexed 4-7) can each score 0-8; the global cap is 8.
+        _valid_range = {"PHQ-9": (0, 3), "GAD-7": (0, 3), "YMRS": (0, 8)}
+        lo, hi = _valid_range[self.scale_name]
+        out_of_range = [a for a in self.answers if not (lo <= a <= hi)]
+        if out_of_range:
+            raise ValueError(
+                f"{self.scale_name} answers must be between {lo} and {hi}, "
+                f"got out-of-range values: {out_of_range}"
+            )
+        return self
 
 
 class ScaleAssessmentRead(BaseModel):

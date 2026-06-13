@@ -8,7 +8,7 @@ Covers:
 """
 from datetime import datetime, timedelta
 
-from .conftest import login, promote_to_clinician, register
+from .conftest import grant_consent, login, promote_to_clinician, register
 
 
 PATIENT_PAYLOAD = {
@@ -46,25 +46,27 @@ def test_batched_clinician_view_caps_per_patient(client, admin_api_key):
     pat1_token = login(client, email="b29-pat1@example.com")
     pat2_token = login(client, email="b29-pat2@example.com")
     doc_token = login(client, email="b29-doc@example.com")
+    grant_consent(client, token=pat1_token)
+    grant_consent(client, token=pat2_token)
 
     # Invite + accept both patients
     for email, pat_token in (("b29-pat1@example.com", pat1_token), ("b29-pat2@example.com", pat2_token)):
         invite = client.post(
-            "/clinician/invites",
+            "/v1/clinician/invites",
             json={"patient_email": email},
             headers=_bearer(doc_token),
         )
-        client.post(f"/me/invites/{invite.json()['id']}/accept", headers=_bearer(pat_token))
+        client.post(f"/v1/me/invites/{invite.json()['id']}/accept", headers=_bearer(pat_token))
 
     for _ in range(60):
-        client.post("/checkins", json=PATIENT_PAYLOAD, headers=_bearer(pat1_token))
-    client.post("/checkins", json=PATIENT_PAYLOAD, headers=_bearer(pat2_token))
+        client.post("/v1/checkins", json=PATIENT_PAYLOAD, headers=_bearer(pat1_token))
+    client.post("/v1/checkins", json=PATIENT_PAYLOAD, headers=_bearer(pat2_token))
 
     # The clinician dashboard listing computes risk via batch — should return
     # both patients with a risk_level even though pat1 has 60 check-ins.
-    response = client.get("/clinician/patients", headers=_bearer(doc_token))
+    response = client.get("/v1/clinician/patients", headers=_bearer(doc_token))
     assert response.status_code == 200
-    body = response.json()
+    body = response.json()["items"]
     assert len(body) == 2
     for patient in body:
         assert patient["risk_score"] is not None
@@ -141,14 +143,14 @@ def test_password_reset_confirm_succeeds_with_valid_code(client, monkeypatch):
     monkeypatch.setattr(notifications.notifications, "send_password_reset_email", fake_send)
 
     register(client, email="reset-me@example.com")
-    client.post("/auth/password-reset", json={"email": "reset-me@example.com"})
+    client.post("/v1/auth/password-reset", json={"email": "reset-me@example.com"})
 
     assert captured["recipient"] == "reset-me@example.com"
     code = captured["code"]
     assert len(code) > 8
 
     confirm = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "reset-me@example.com",
             "reset_code": code,
@@ -159,21 +161,21 @@ def test_password_reset_confirm_succeeds_with_valid_code(client, monkeypatch):
 
     # Old password no longer works.
     bad = client.post(
-        "/auth/login",
+        "/v1/auth/login",
         json={"email": "reset-me@example.com", "password": "supersecret1"},
     )
     assert bad.status_code == 401
 
     # New password does.
     good = client.post(
-        "/auth/login",
+        "/v1/auth/login",
         json={"email": "reset-me@example.com", "password": "newsecret1"},
     )
     assert good.status_code == 200
 
     # Reusing the code now fails.
     replay = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "reset-me@example.com",
             "reset_code": code,
@@ -186,7 +188,7 @@ def test_password_reset_confirm_succeeds_with_valid_code(client, monkeypatch):
 def test_password_reset_confirm_uniform_error_on_bad_code(client):
     register(client, email="probe@example.com")
     response = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "probe@example.com",
             "reset_code": "definitely-not-issued-code",
@@ -196,7 +198,7 @@ def test_password_reset_confirm_uniform_error_on_bad_code(client):
     assert response.status_code == 400
     # Same error shape for completely unknown email.
     response2 = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "ghost@example.com",
             "reset_code": "anything",
@@ -219,7 +221,7 @@ def test_password_reset_confirm_rejects_expired_token(client, monkeypatch):
     monkeypatch.setattr(notifications.notifications, "send_password_reset_email", fake_send)
 
     register(client, email="late@example.com")
-    client.post("/auth/password-reset", json={"email": "late@example.com"})
+    client.post("/v1/auth/password-reset", json={"email": "late@example.com"})
 
     with database.SessionLocal() as session:
         record = session.query(models.PasswordResetToken).first()
@@ -227,7 +229,7 @@ def test_password_reset_confirm_rejects_expired_token(client, monkeypatch):
         session.commit()
 
     response = client.post(
-        "/auth/password-reset/confirm",
+        "/v1/auth/password-reset/confirm",
         json={
             "email": "late@example.com",
             "reset_code": captured["code"],

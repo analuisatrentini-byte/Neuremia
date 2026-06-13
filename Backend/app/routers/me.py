@@ -19,6 +19,7 @@ from ..services import (
     invite_read_batch,
     report_read,
     user_read,
+    utcnow,
 )
 
 # Maximum number of check-in records returned in a single export to prevent
@@ -121,7 +122,7 @@ def grant_consent(
         db.add(existing)
     else:
         existing.revoked_at = None
-        existing.granted_at = datetime.now(timezone.utc)
+        existing.granted_at = utcnow()
         existing.policy_version = payload.policy_version
     audit(db, user, "grant_consent", "consent", payload.purpose)
     db.commit()
@@ -143,7 +144,7 @@ def revoke_consent(
     if consent is None:
         raise HTTPException(status_code=404, detail="Consent not found")
     if consent.revoked_at is None:
-        consent.revoked_at = datetime.now(timezone.utc)
+        consent.revoked_at = utcnow()
         audit(db, user, "revoke_consent", "consent", purpose)
         db.commit()
         db.refresh(consent)
@@ -269,7 +270,7 @@ def delete_my_clinical_data(
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
 ):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max(days_older_than, 1))
+    cutoff = utcnow() - timedelta(days=max(days_older_than, 1))
     checkins = db.query(models.DailyCheckIn).filter(
         models.DailyCheckIn.patient_id == user.id,
         models.DailyCheckIn.created_at < cutoff,
@@ -373,7 +374,7 @@ def revoke_clinician_access(
     ).all()
     for invite in invites:
         invite.status = models.InviteStatus.revoked.value
-        invite.decided_at = datetime.now(timezone.utc)
+        invite.decided_at = utcnow()
 
     audit(db, user, "revoke_clinician_access", "user", str(clinician_id))
     db.commit()
@@ -383,7 +384,7 @@ def revoke_clinician_access(
 @router.get("/invites", response_model=list[schemas.ClinicianInviteRead])
 def list_my_invites(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
     require_role(user, models.UserRole.patient.value)
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     invites = (
         db.query(models.ClinicianPatientInvite)
         .filter(
@@ -415,7 +416,7 @@ def accept_clinician_invite(
         raise HTTPException(status_code=404, detail="Invite not found")
 
     invite.status = models.InviteStatus.accepted.value
-    invite.decided_at = datetime.now(timezone.utc)
+    invite.decided_at = utcnow()
 
     existing_link = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == invite.clinician_id,
@@ -447,7 +448,7 @@ def revoke_clinician_invite(
         raise HTTPException(status_code=404, detail="Invite not found")
 
     invite.status = models.InviteStatus.revoked.value
-    invite.decided_at = datetime.now(timezone.utc)
+    invite.decided_at = utcnow()
 
     link = db.query(models.ClinicianPatientLink).filter(
         models.ClinicianPatientLink.clinician_id == invite.clinician_id,

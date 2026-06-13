@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -23,13 +24,16 @@ from ..security import (
     hash_reset_code,
     verify_password,
 )
-from ..services import audit, issue_token_pair, user_read
+from ..services import audit, issue_token_pair, user_read, utcnow
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=schemas.TokenResponse)
+_REGISTER_GENERIC = "Se este e-mail estiver disponivel, voce receberá um e-mail de confirmacao."
+
+
+@router.post("/register")
 @limiter.limit("5/minute")
 def register(
     request: Request,
@@ -38,7 +42,9 @@ def register(
 ):
     existing = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="Email already registered")
+        # Return 200 with neutral message — identical status to a real registration
+        # so an attacker cannot enumerate registered patients by trying email addresses.
+        return JSONResponse(status_code=200, content={"message": _REGISTER_GENERIC})
 
     # Sprint B / LGPD: full_name encriptado at rest. Response devolve plaintext
     # via `user_read` (que decripta).
@@ -79,7 +85,7 @@ def login(
     # Sprint B: bloqueio temporário por conta após N tentativas falhas. Rate
     # limit por IP (10/min) já existia mas era ineficaz contra credential
     # stuffing distribuído. O lockout por conta complementa.
-    if user is not None and user.locked_until is not None and user.locked_until > datetime.now(timezone.utc):
+    if user is not None and user.locked_until is not None and user.locked_until > utcnow():
         # Mensagem deliberadamente genérica — não revela que a conta existe.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
@@ -92,7 +98,7 @@ def login(
                 # Backoff geométrico: 5 falhas → 60s, 6 → 120s, 7 → 240s...
                 overflow = user.failed_login_count - _FAILED_LOGIN_THRESHOLD
                 backoff = _FAILED_LOGIN_BACKOFF_BASE_SECONDS * (2 ** overflow)
-                user.locked_until = datetime.now(timezone.utc) + timedelta(seconds=backoff)
+                user.locked_until = utcnow() + timedelta(seconds=backoff)
                 audit(db, user, "login_lockout", "user", str(user.id))
             db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -135,14 +141,14 @@ def refresh_session(
     """Trade a refresh token for a new access+refresh pair."""
     digest = hash_refresh_token(payload.refresh_token)
     record = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == digest).first()
-    if record is None or record.revoked_at is not None or record.expires_at < datetime.now(timezone.utc):
+    if record is None or record.revoked_at is not None or record.expires_at < utcnow():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     user = db.query(models.User).filter(models.User.id == record.user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    record.revoked_at = datetime.now(timezone.utc)
+    record.revoked_at = utcnow()
     access, refresh = issue_token_pair(db, user)
     audit(db, user, "refresh_session", "refresh_token", str(record.id))
     db.commit()
@@ -168,7 +174,7 @@ def logout(
         models.RefreshToken.user_id == user.id,
     ).first()
     if record is not None and record.revoked_at is None:
-        record.revoked_at = datetime.now(timezone.utc)
+        record.revoked_at = utcnow()
         audit(db, user, "logout", "refresh_token", str(record.id))
 
     access_payload = decode_access_token_payload(token) or {}
@@ -200,7 +206,7 @@ def request_password_reset(
         db.add(models.PasswordResetToken(
             user_id=user.id,
             token_hash=hash_reset_code(reset_code),
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            expires_at=utcnow() + timedelta(minutes=30),
         ))
         sent = notifications.send_password_reset_email(user.email, reset_code)
         audit(db, user, "password_reset_requested", "user", str(user.id))
@@ -233,16 +239,16 @@ def confirm_password_reset(
         models.PasswordResetToken.token_hash == digest,
         models.PasswordResetToken.user_id == user.id,
     ).first()
-    if record is None or record.used_at is not None or record.expires_at < datetime.now(timezone.utc):
+    if record is None or record.used_at is not None or record.expires_at < utcnow():
         raise generic_error
 
     user.password_hash = hash_password(payload.new_password)
-    record.used_at = datetime.now(timezone.utc)
+    record.used_at = utcnow()
 
     db.query(models.RefreshToken).filter(
         models.RefreshToken.user_id == user.id,
         models.RefreshToken.revoked_at.is_(None),
-    ).update({models.RefreshToken.revoked_at: datetime.now(timezone.utc)}, synchronize_session=False)
+    ).update({models.RefreshToken.revoked_at: utcnow()}, synchronize_session=False)
     user.token_epoch = user.token_epoch + 1
 
     audit(db, user, "password_reset_confirmed", "user", str(user.id))

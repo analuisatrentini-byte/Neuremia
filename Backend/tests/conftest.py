@@ -97,7 +97,7 @@ def admin_api_key() -> str:
 
 def register(client, *, email: str, password: str = "supersecret1", full_name: str = "User") -> dict:
     response = client.post(
-        "/auth/register",
+        "/v1/auth/register",
         json={"email": email, "password": password, "full_name": full_name},
     )
     assert response.status_code == 200, response.text
@@ -105,15 +105,30 @@ def register(client, *, email: str, password: str = "supersecret1", full_name: s
 
 
 def login(client, *, email: str, password: str = "supersecret1") -> str:
-    response = client.post("/auth/login", json={"email": email, "password": password})
+    response = client.post("/v1/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
 
 
 def promote_to_clinician(client, *, user_id: int, admin_key: str) -> None:
     response = client.post(
-        f"/admin/users/{user_id}/role",
+        f"/v1/admin/users/{user_id}/role",
         json={"role": "clinician"},
         headers={"X-Admin-API-Key": admin_key},
     )
     assert response.status_code == 200, response.text
+
+
+def grant_consent(client, *, token: str, purpose: str = "clinical_data_storage") -> None:
+    """Grant LGPD consent for the authenticated user.
+
+    Most write endpoints (POST /checkins, /assessments, /reports) require an
+    active clinical_data_storage consent. Call this helper after login before
+    exercising those endpoints in tests.
+    """
+    response = client.post(
+        "/v1/me/consents",
+        json={"purpose": purpose, "policy_version": "test-1.0"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code in (200, 201), response.text

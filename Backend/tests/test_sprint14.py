@@ -28,11 +28,11 @@ def test_logout_revokes_access_token_within_ttl(client):
     refresh = response["refresh_token"]
 
     # Token works before logout.
-    me_before = client.get("/me", headers=_bearer(access))
+    me_before = client.get("/v1/me", headers=_bearer(access))
     assert me_before.status_code == 200
 
     logout = client.post(
-        "/auth/logout",
+        "/v1/auth/logout",
         json={"refresh_token": refresh},
         headers=_bearer(access),
     )
@@ -40,7 +40,7 @@ def test_logout_revokes_access_token_within_ttl(client):
 
     # Token is now refused — without S34 this would still pass because exp
     # is 30 minutes in the future.
-    me_after = client.get("/me", headers=_bearer(access))
+    me_after = client.get("/v1/me", headers=_bearer(access))
     assert me_after.status_code == 401
 
 
@@ -66,7 +66,7 @@ def test_admin_purge_removes_expired_jti_blacklist_rows(client, admin_api_key):
     access = user["access_token"]
     refresh = user["refresh_token"]
 
-    client.post("/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
+    client.post("/v1/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
 
     with database.SessionLocal() as session:
         record = session.query(models.RevokedAccessToken).first()
@@ -75,7 +75,7 @@ def test_admin_purge_removes_expired_jti_blacklist_rows(client, admin_api_key):
         session.commit()
 
     response = client.post(
-        "/admin/refresh-tokens/purge",
+        "/v1/admin/refresh-tokens/purge",
         headers={"X-Admin-API-Key": admin_api_key},
     )
     assert response.status_code == 200
@@ -87,11 +87,11 @@ def test_logout_twice_is_idempotent_on_blacklist(client):
     access = user["access_token"]
     refresh = user["refresh_token"]
 
-    first = client.post("/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
+    first = client.post("/v1/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
     assert first.status_code == 200
 
     # Bearer is now revoked so the second logout call MUST be rejected by
     # current_user before reaching the body. This is the intended UX:
     # a logged-out token can't drive any more endpoints.
-    second = client.post("/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
+    second = client.post("/v1/auth/logout", json={"refresh_token": refresh}, headers=_bearer(access))
     assert second.status_code == 401

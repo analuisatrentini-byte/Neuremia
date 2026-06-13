@@ -1,4 +1,4 @@
-from .conftest import login, promote_to_clinician, register
+from .conftest import grant_consent, login, promote_to_clinician, register
 
 
 PATIENT_PAYLOAD = {
@@ -26,14 +26,15 @@ def test_patient_cannot_access_other_patient_checkins(client):
     bob = register(client, email="bob@example.com")
     alice_token = login(client, email="alice@example.com")
     bob_token = login(client, email="bob@example.com")
+    grant_consent(client, token=alice_token)
 
     # Alice posts a check-in.
-    response = client.post("/checkins", json=PATIENT_PAYLOAD, headers=_bearer(alice_token))
+    response = client.post("/v1/checkins", json=PATIENT_PAYLOAD, headers=_bearer(alice_token))
     assert response.status_code == 200
 
     # Bob tries to read Alice's check-ins.
     response = client.get(
-        f"/patients/{alice['user']['id']}/checkins",
+        f"/v1/patients/{alice['user']['id']}/checkins",
         headers=_bearer(bob_token),
     )
     assert response.status_code == 403
@@ -43,7 +44,7 @@ def test_patient_cannot_use_clinician_invite_endpoint(client):
     register(client, email="solo@example.com")
     token = login(client, email="solo@example.com")
     response = client.post(
-        "/clinician/invites",
+        "/v1/clinician/invites",
         json={"patient_email": "anyone@example.com"},
         headers=_bearer(token),
     )
@@ -57,7 +58,7 @@ def test_clinician_cannot_view_patient_data_without_link(client, admin_api_key):
     doc_token = login(client, email="doc@example.com")
 
     response = client.get(
-        f"/patients/{patient['user']['id']}/checkins",
+        f"/v1/patients/{patient['user']['id']}/checkins",
         headers=_bearer(doc_token),
     )
     assert response.status_code == 403
@@ -73,7 +74,7 @@ def test_clinician_sees_patient_only_after_invite_accepted(client, admin_api_key
 
     # Clinician invites — should NOT create a link by itself.
     invite_response = client.post(
-        "/clinician/invites",
+        "/v1/clinician/invites",
         json={"patient_email": "pat2@example.com"},
         headers=_bearer(doc_token),
     )
@@ -82,19 +83,19 @@ def test_clinician_sees_patient_only_after_invite_accepted(client, admin_api_key
 
     # No link yet: clinician cannot read patient data.
     response = client.get(
-        f"/patients/{patient['user']['id']}/checkins",
+        f"/v1/patients/{patient['user']['id']}/checkins",
         headers=_bearer(doc_token),
     )
     assert response.status_code == 403
 
     # Patient accepts.
-    accept = client.post(f"/me/invites/{invite_id}/accept", headers=_bearer(pat_token))
+    accept = client.post(f"/v1/me/invites/{invite_id}/accept", headers=_bearer(pat_token))
     assert accept.status_code == 200, accept.text
     assert accept.json()["status"] == "accepted"
 
     # Now the clinician can read.
     response = client.get(
-        f"/patients/{patient['user']['id']}/checkins",
+        f"/v1/patients/{patient['user']['id']}/checkins",
         headers=_bearer(doc_token),
     )
     assert response.status_code == 200
@@ -103,7 +104,7 @@ def test_clinician_sees_patient_only_after_invite_accepted(client, admin_api_key
 def test_clinician_role_required_for_clinician_patients_listing(client):
     register(client, email="patient3@example.com")
     token = login(client, email="patient3@example.com")
-    response = client.get("/clinician/patients", headers=_bearer(token))
+    response = client.get("/v1/clinician/patients", headers=_bearer(token))
     assert response.status_code == 403
 
 
@@ -112,5 +113,5 @@ def test_patient_invites_endpoint_only_for_patients(client, admin_api_key):
     promote_to_clinician(client, user_id=clinician["user"]["id"], admin_key=admin_api_key)
     token = login(client, email="doc3@example.com")
 
-    response = client.get("/me/invites", headers=_bearer(token))
+    response = client.get("/v1/me/invites", headers=_bearer(token))
     assert response.status_code == 403

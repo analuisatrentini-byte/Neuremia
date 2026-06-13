@@ -26,7 +26,7 @@ from ..security import (
     totp_provisioning_uri,
     verify_totp_code,
 )
-from ..services import audit, issue_token_pair, user_read
+from ..services import audit, issue_token_pair, user_read, utcnow
 
 
 router = APIRouter(prefix="/auth/2fa", tags=["2fa"])
@@ -104,7 +104,7 @@ def totp_verify(
     )
     if session is None or session.used_at is not None:
         raise invalid
-    if session.expires_at < datetime.now(timezone.utc):
+    if session.expires_at < utcnow():
         raise invalid
 
     user = db.query(models.User).filter(models.User.id == session.user_id).first()
@@ -115,7 +115,7 @@ def totp_verify(
     if not verify_totp_code(secret, payload.code):
         raise HTTPException(status_code=400, detail="Codigo TOTP invalido")
 
-    session.used_at = datetime.now(timezone.utc)
+    session.used_at = utcnow()
     access, refresh = issue_token_pair(db, user)
     audit(db, user, "2fa_login", "user", str(user.id))
     db.commit()

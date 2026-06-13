@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import require_admin
-from ..services import user_read
+from ..services import user_read, utcnow
 
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 @router.post("/refresh-tokens/purge", response_model=schemas.AdminPurgeResponse)
 def admin_purge_refresh_tokens(db: Session = Depends(get_db)):
     """Reaps short-lived auth records that no longer matter."""
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     refresh_cutoff = now - timedelta(days=1)
 
     purged_refresh = (
@@ -75,7 +75,7 @@ def admin_revoke_sessions(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     user.token_epoch = user.token_epoch + 1
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     revoked_refresh = (
         db.query(models.RefreshToken)
         .filter(
