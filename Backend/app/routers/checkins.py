@@ -50,7 +50,8 @@ def create_checkin(
     checkin = models.DailyCheckIn(patient_id=user.id, **payload_data)
     db.add(checkin)
 
-    if payload.suicidal_ideation or payload.mood <= 1 or payload.anxiety >= 4.5:
+    high_risk = payload.suicidal_ideation or payload.mood <= 1 or payload.anxiety >= 4.5
+    if high_risk:
         title = "Risco clínico prioritário"
         message = "Triagem ou sintomas recentes indicam necessidade de revisão clínica prioritária."
         db.add(models.ClinicalAlert(
@@ -59,11 +60,19 @@ def create_checkin(
             title=title,
             message=encrypt_field(message),
         ))
-        notify_linked_clinicians(db, user, title, message)
 
     audit(db, user, "create_checkin", "daily_checkin", "pending")
     db.commit()
     db.refresh(checkin)
+
+    # Notify AFTER commit so a notification failure never discards the check-in.
+    if high_risk:
+        try:
+            notify_linked_clinicians(db, user, title, message)
+        except Exception:
+            audit(db, user, "notification_failed", "daily_checkin", str(checkin.id))
+            db.commit()
+
     # M9 — keep risk cache fresh after every check-in.
     update_risk_cache(db, user.id)
     db.commit()

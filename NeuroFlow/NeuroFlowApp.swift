@@ -25,7 +25,11 @@ private enum NeuroFlowBackgroundTasks {
 
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: backupRefreshIdentifier, using: nil) { task in
-            handleBackupRefresh(task: task as! BGAppRefreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            handleBackupRefresh(task: refreshTask)
         }
     }
 

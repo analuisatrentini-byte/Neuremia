@@ -1,7 +1,10 @@
 import hashlib
+import logging
 import os
 import secrets as _secrets
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger("neuroflow.security")
 
 import pyotp
 
@@ -174,6 +177,9 @@ def hash_pending_session(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+_DECRYPT_ERROR_MARKER = "[dado:ilegível]"
+
+
 def decrypt_field(value: str | None) -> str:
     if not value:
         return ""
@@ -181,9 +187,11 @@ def decrypt_field(value: str | None) -> str:
     try:
         return field_cipher.decrypt(value.encode()).decode()
     except InvalidToken:
-        # Sprint B: dev retornava `value` (o ciphertext cru) como se fosse
-        # plaintext — mascarava regressões e o teste passava verde com lixo.
-        # Agora retorna marker explícito em dev e mantém o raise em prod.
-        if IS_PRODUCTION:
-            raise
-        return "[encrypted:undecryptable]"
+        # Log the corruption so it surfaces in observability, but return a
+        # safe marker rather than raising — a single corrupted record must not
+        # crash the entire list endpoint and make all other records inaccessible.
+        logger.error(
+            "decrypt_field: InvalidToken — ciphertext corrupted or key mismatch "
+            "(prefix=%.16s…)", value
+        )
+        return _DECRYPT_ERROR_MARKER

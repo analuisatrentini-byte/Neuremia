@@ -479,12 +479,13 @@ def test_encrypt_produces_different_ciphertext_each_call():
     assert c1 != c2
 
 
-def test_decrypt_garbage_returns_marker_in_non_prod():
-    """decrypt_field on garbage must not crash in non-prod; returns marker."""
+def test_decrypt_garbage_returns_marker():
+    """decrypt_field on garbage must not crash; returns safe marker."""
     from app.security import decrypt_field
 
     result = decrypt_field("not-valid-fernet-ciphertext")
-    assert result == "[encrypted:undecryptable]"
+    from app.security import _DECRYPT_ERROR_MARKER
+    assert result == _DECRYPT_ERROR_MARKER
 
 
 def test_backup_round_trip(client):
