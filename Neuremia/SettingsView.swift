@@ -980,15 +980,18 @@ extension ContentView {
                 .accessibilityHint("Abre o formulário para enviar o código recebido por e-mail e definir uma nova senha.")
             }
 
-            // P1-2: loginStatusMessage migrado para toast central.
-            // P2-1 (UX): URL do backend e instrução de infraestrutura
-            // removidas da UI de produção — expor detalhes técnicos prejudica
-            // a confiança do usuário. Visível apenas em builds de Debug.
-            #if DEBUG
-            Text("Debug: conectando em http://127.0.0.1:8000")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            #endif
+            if !loginStatusMessage.isEmpty {
+                Text(loginStatusMessage)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("authenticationStatus")
+            }
+            if isCreatingAccount {
+                Text("Use uma senha com pelo menos 8 caracteres, incluindo letras e números.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
         }
         .panelStyle()
     }

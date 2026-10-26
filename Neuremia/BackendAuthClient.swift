@@ -1573,6 +1573,9 @@ enum BackendAuthClient {
             throw decodeServerError(from: data, status: httpResponse.statusCode)
         }
 
+        if (try? JSONDecoder().decode(MessageResponse.self, from: data)) != nil {
+            throw BackendAuthError.serverError("Não foi possível concluir o cadastro. Se você já tem uma conta, toque em Já tenho conta para entrar.")
+        }
         return try JSONDecoder().decode(BackendLoginResponse.self, from: data)
     }
 
