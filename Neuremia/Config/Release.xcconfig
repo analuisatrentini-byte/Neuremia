@@ -15,7 +15,7 @@ INFOPLIST_KEY_CFBundleDisplayName = Neuremia
 
 // REQUIRED for account/backend features. Missing or placeholder values fail
 // safely at runtime instead of crashing the app.
-INFOPLIST_KEY_NeuremiaAPIBaseURL = https:/$()/api.your-domain.com
+INFOPLIST_KEY_NeuremiaAPIBaseURL = https:/$()/neuremia-api-production.up.railway.app
 
 // OPTIONAL — comma-separated SHA-256 DER hashes of allowed server certificates.
 // Leave empty to use standard iOS TLS trust evaluation.

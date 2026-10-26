@@ -1,4 +1,4 @@
-"""composite index on daily_check_in(patient_id, created_at)
+"""composite index on daily_checkins(patient_id, created_at)
 
 Revision ID: 0010_checkin_patient_date_idx
 Revises: 0009_encrypt_pii
@@ -13,6 +13,7 @@ both the WHERE and ORDER BY in a single index scan.
 from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
 
 
 revision: str = "0010_checkin_patient_date_idx"
@@ -22,12 +23,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Later revision identifiers exceed Alembic's default VARCHAR(32).
+    if op.get_bind().dialect.name == "postgresql":
+        op.alter_column("alembic_version", "version_num", type_=sa.String(128))
     op.create_index(
         "ix_daily_checkin_patient_created",
-        "daily_check_in",
+        "daily_checkins",
         ["patient_id", "created_at"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_daily_checkin_patient_created", table_name="daily_check_in")
+    op.drop_index("ix_daily_checkin_patient_created", table_name="daily_checkins")
