@@ -12,6 +12,18 @@ class UserRole(str, Enum):
     clinician = "clinician"
 
 
+class AlertType(str, Enum):
+    psychiatric_emergency = "psychiatric_emergency"
+    clinical_watch = "clinical_watch"
+    self_signal = "self_signal"
+
+
+class EscalationTarget(str, Enum):
+    clinician_caregiver_now = "clinician_caregiver_now"
+    clinician_digest = "clinician_digest"
+    patient_only = "patient_only"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -154,6 +166,7 @@ class ScaleAssessment(Base):
     __tablename__ = "scale_assessments"
     __table_args__ = (
         Index("ix_assessments_patient_created", "patient_id", "created_at"),
+        Index("ix_assessments_patient_deleted", "patient_id", "deleted_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -161,6 +174,8 @@ class ScaleAssessment(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # N-C2 — soft delete for LGPD compliance
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     scale_name: Mapped[str] = mapped_column(String(32))
     answers_json: Mapped[str] = mapped_column(Text)
     score: Mapped[int] = mapped_column(Integer)
@@ -174,6 +189,7 @@ class ClinicalAlert(Base):
     __table_args__ = (
         Index("ix_alerts_patient_created", "patient_id", "created_at"),
         Index("ix_alerts_patient_deleted", "patient_id", "deleted_at"),
+        Index("ix_alerts_type_target", "alert_type", "escalation_target"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -184,6 +200,18 @@ class ClinicalAlert(Base):
     # B6 — soft delete
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     level: Mapped[str] = mapped_column(String(32))
+    alert_type: Mapped[str] = mapped_column(
+        String(64),
+        default=AlertType.psychiatric_emergency.value,
+        server_default=AlertType.psychiatric_emergency.value,
+        nullable=False,
+    )
+    escalation_target: Mapped[str] = mapped_column(
+        String(64),
+        default=EscalationTarget.clinician_caregiver_now.value,
+        server_default=EscalationTarget.clinician_caregiver_now.value,
+        nullable=False,
+    )
     title: Mapped[str] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text)
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -356,3 +384,92 @@ class TotpPendingSession(Base):
     session_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BaselineMetric(str, Enum):
+    """Metrics we roll a personal baseline over. Fixed enum so downstream
+    consumers (episode pipeline, insights) can reason about semantics without
+    string matching."""
+    mood = "mood"
+    anxiety = "anxiety"
+    energy = "energy"
+    irritability = "irritability"
+    sleep_hours = "sleep_hours"
+
+
+class UserBaseline(Base):
+    """Rolling personal baseline per (patient, metric). Recomputed after each
+    check-in from the last 60 days. Enables "your HRV is 15% below *your*
+    normal" instead of population-level thresholds — the substrate for the
+    personalized-insight loop that drives retention."""
+    __tablename__ = "user_baselines"
+    __table_args__ = (
+        UniqueConstraint("patient_id", "metric", name="uq_user_baseline_metric"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    metric: Mapped[str] = mapped_column(String(32))
+    window_days: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    mean_value: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    stdev_value: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    current_value: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class InterventionType(str, Enum):
+    """Catalogued intervention families. Kept small on purpose — insights need
+    enough samples per bucket to be statistically meaningful. Add sparingly."""
+    breathing = "breathing"
+    walk = "walk"
+    sleep_hygiene = "sleep_hygiene"
+    journaling = "journaling"
+    medication_adherence = "medication_adherence"
+    social_contact = "social_contact"
+    mindfulness = "mindfulness"
+    therapy_technique = "therapy_technique"
+
+
+class InterventionTriggerSource(str, Enum):
+    user_manual = "user_manual"
+    alert = "alert"
+    app_suggestion = "app_suggestion"
+
+
+class InterventionLog(Base):
+    """Records that a patient used (or committed to) an intervention. The
+    baseline snapshot at trigger time is stored inline so the outcome delta
+    can be computed even after subsequent check-ins shift the rolling mean.
+
+    Notes are optional free-text (encrypted at rest — treated as PHI). Outcome
+    fields stay NULL until enough post-trigger check-ins arrive to compute a
+    delta (see interventions.compute_pending_outcomes)."""
+    __tablename__ = "intervention_logs"
+    __table_args__ = (
+        Index("ix_intervention_logs_patient_created", "patient_id", "triggered_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    intervention_type: Mapped[str] = mapped_column(String(64))
+    trigger_source: Mapped[str] = mapped_column(
+        String(32),
+        default=InterventionTriggerSource.user_manual.value,
+        server_default=InterventionTriggerSource.user_manual.value,
+    )
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    baseline_snapshot_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    notes_encrypted: Mapped[str] = mapped_column(Text, default="", server_default="")
+    outcome_computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    outcome_delta_json: Mapped[str | None] = mapped_column(Text, nullable=True)

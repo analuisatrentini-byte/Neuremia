@@ -4,15 +4,18 @@ Kept here so routers can reach for them without pulling in `main.py` (which
 would create cycles) and so they remain testable in isolation.
 """
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .notifications import notifications
 from .security import create_access_token, decrypt_field, encrypt_field, generate_refresh_token
+
+logger = logging.getLogger("neuremia.services")
 
 
 def utcnow() -> datetime:
@@ -123,13 +126,38 @@ def log_notification(
 # ------------------------------------------------------------ access control
 
 
+def accepted_clinician_patient_links(
+    db: Session,
+    *,
+    clinician_id: int | None = None,
+    patient_id: int | None = None,
+):
+    query = db.query(models.ClinicianPatientLink).join(
+        models.ClinicianPatientInvite,
+        and_(
+            models.ClinicianPatientInvite.clinician_id == models.ClinicianPatientLink.clinician_id,
+            models.ClinicianPatientInvite.patient_id == models.ClinicianPatientLink.patient_id,
+            models.ClinicianPatientInvite.status == models.InviteStatus.accepted.value,
+        ),
+    )
+    if clinician_id is not None:
+        query = query.filter(models.ClinicianPatientLink.clinician_id == clinician_id)
+    if patient_id is not None:
+        query = query.filter(models.ClinicianPatientLink.patient_id == patient_id)
+    return query
+
+
 def can_access_patient(db: Session, user: models.User, patient_id: int) -> bool:
     if user.role == models.UserRole.patient.value:
         return user.id == patient_id
 
-    return db.query(models.ClinicianPatientLink).filter(
-        models.ClinicianPatientLink.clinician_id == user.id,
-        models.ClinicianPatientLink.patient_id == patient_id,
+    if user.role != models.UserRole.clinician.value:
+        return False
+
+    return accepted_clinician_patient_links(
+        db,
+        clinician_id=user.id,
+        patient_id=patient_id,
     ).first() is not None
 
 
@@ -171,6 +199,16 @@ def alert_read(alert: models.ClinicalAlert) -> schemas.ClinicalAlertRead:
         patient_id=alert.patient_id,
         created_at=alert.created_at,
         level=alert.level,
+        alert_type=getattr(
+            alert,
+            "alert_type",
+            models.AlertType.psychiatric_emergency.value,
+        ),
+        escalation_target=getattr(
+            alert,
+            "escalation_target",
+            models.EscalationTarget.clinician_caregiver_now.value,
+        ),
         title=alert.title,
         message=decrypt_field(alert.message),
         acknowledged=alert.acknowledged,
@@ -521,6 +559,8 @@ def notify_enabled_caregivers(
     title: str,
     message: str,
     event_type: str,
+    *,
+    send_sms: bool = False,
 ) -> None:
     caregivers = db.query(models.CaregiverContact).filter(
         models.CaregiverContact.patient_id == patient.id,
@@ -535,8 +575,28 @@ def notify_enabled_caregivers(
                 recipient, patient_name, title, message
             )
             log_notification(db, patient.id, recipient, "email", event_type, sent, title)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to send alert email to %s: %s", recipient, e)
             log_notification(db, patient.id, recipient, "email", event_type, False, "exception")
+
+        if send_sms and _looks_like_phone_number(recipient):
+            sent_sms = notifications.send_sms_webhook(
+                recipient,
+                title,
+                message,
+                data={
+                    "event_type": event_type,
+                    "patient_id": str(patient.id),
+                },
+            )
+            log_notification(db, patient.id, recipient, "sms", event_type, sent_sms, title)
+
+
+def _looks_like_phone_number(value: str) -> bool:
+    if "@" in value:
+        return False
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return len(digits) >= 8
 
 
 def notify_linked_clinicians(
@@ -544,13 +604,25 @@ def notify_linked_clinicians(
     patient: models.User,
     title: str,
     message: str,
+    *,
+    event_type: str = "clinical_alert",
+    include_caregivers: bool = True,
+    send_push: bool = True,
+    critical_push: bool = False,
+    sms_caregivers: bool = False,
 ) -> None:
-    links = db.query(models.ClinicianPatientLink).filter(
-        models.ClinicianPatientLink.patient_id == patient.id
-    ).all()
+    links = accepted_clinician_patient_links(db, patient_id=patient.id).all()
     clinician_ids = [link.clinician_id for link in links]
     if not clinician_ids:
-        notify_enabled_caregivers(db, patient, title, message, event_type="clinical_alert")
+        if include_caregivers:
+            notify_enabled_caregivers(
+                db,
+                patient,
+                title,
+                message,
+                event_type=event_type,
+                send_sms=sms_caregivers,
+            )
         return
 
     clinicians = db.query(models.User).filter(models.User.id.in_(clinician_ids)).all()
@@ -568,29 +640,87 @@ def notify_linked_clinicians(
             sent_email = notifications.send_clinical_alert_email(
                 clinician.email, patient_name, title, message
             )
-            log_notification(db, patient.id, clinician.email, "email", "clinical_alert", sent_email, title)
-            for token in tokens_by_clinician.get(clinician.id, []):
+            log_notification(db, patient.id, clinician.email, "email", event_type, sent_email, title)
+            clinician_tokens = tokens_by_clinician.get(clinician.id, []) if send_push else []
+            for token in clinician_tokens:
                 # title/body are stripped inside send_push_webhook (PHI-safe).
                 # Only event_type and patient_id survive the safe_data whitelist
                 # so the clinician app can route to the right screen without
                 # any clinical content leaving the authenticated channel.
                 sent_push = notifications.send_push_webhook(
                     token.token,
-                    "NeuroFlow",
+                    "Neuremia",
                     "Nova atualizacao clinica",
                     data={
-                        "event_type": "clinical_alert",
+                        "event_type": event_type,
                         "patient_id": str(patient.id),
                     },
+                    critical=critical_push,
                 )
                 log_notification(
                     db, patient.id, f"{token.platform}:{token.id}",
-                    "push", "clinical_alert", sent_push, title,
+                    "critical_push" if critical_push else "push", event_type, sent_push, title,
                 )
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to notify clinician %s: %s", clinician.id, e)
             audit(db, patient, "notification_failed", "user", str(clinician.id))
 
-    notify_enabled_caregivers(db, patient, title, message, event_type="clinical_alert")
+    if include_caregivers:
+        notify_enabled_caregivers(
+            db,
+            patient,
+            title,
+            message,
+            event_type=event_type,
+            send_sms=sms_caregivers,
+        )
+
+
+def route_clinical_alert_notification(
+    db: Session,
+    patient: models.User,
+    alert_type: str,
+    escalation_target: str,
+    title: str,
+    message: str,
+) -> None:
+    """Route typed alerts. risk_score remains display-only; fan-out is driven
+    by an explicit clinical event type and escalation target."""
+    if escalation_target == models.EscalationTarget.clinician_caregiver_now.value:
+        notify_linked_clinicians(
+            db,
+            patient,
+            title,
+            message,
+            event_type=alert_type,
+            include_caregivers=True,
+            send_push=True,
+            critical_push=True,
+            sms_caregivers=True,
+        )
+        return
+
+    if escalation_target == models.EscalationTarget.clinician_digest.value:
+        log_notification(
+            db,
+            patient.id,
+            "clinician_digest",
+            "digest",
+            alert_type,
+            True,
+            title,
+        )
+        return
+
+    log_notification(
+        db,
+        patient.id,
+        "patient_only",
+        "local",
+        alert_type,
+        True,
+        "no_fanout",
+    )
 
 
 def notify_linked_clinicians_report(
@@ -598,9 +728,7 @@ def notify_linked_clinicians_report(
     patient: models.User,
     summary: str,
 ) -> None:
-    links = db.query(models.ClinicianPatientLink).filter(
-        models.ClinicianPatientLink.patient_id == patient.id
-    ).all()
+    links = accepted_clinician_patient_links(db, patient_id=patient.id).all()
     clinician_ids = [link.clinician_id for link in links]
     if not clinician_ids:
         notify_enabled_caregivers(
@@ -630,7 +758,7 @@ def notify_linked_clinicians_report(
             for token in tokens_by_clinician.get(clinician.id, []):
                 sent_push = notifications.send_push_webhook(
                     token.token,
-                    "NeuroFlow",
+                    "Neuremia",
                     "Novo relatorio clinico disponivel",
                     data={
                         "event_type": "clinical_report",
@@ -641,7 +769,8 @@ def notify_linked_clinicians_report(
                     db, patient.id, f"{token.platform}:{token.id}",
                     "push", "clinical_report", sent_push, "automatic_report",
                 )
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to send report notification to clinician %s: %s", clinician.id, e)
             audit(db, patient, "report_notification_failed", "user", str(clinician.id))
 
     notify_enabled_caregivers(

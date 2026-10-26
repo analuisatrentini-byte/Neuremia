@@ -10,6 +10,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import current_user, require_role
 from ..services import (
+    accepted_clinician_patient_links,
     audit,
     decrypted_full_name,
     invite_read,
@@ -112,9 +113,7 @@ def clinician_patients(
     user: models.User = Depends(current_user),
 ):
     require_role(user, models.UserRole.clinician.value)
-    links = db.query(models.ClinicianPatientLink).filter(
-        models.ClinicianPatientLink.clinician_id == user.id
-    ).all()
+    links = accepted_clinician_patient_links(db, clinician_id=user.id).all()
     patient_ids = [link.patient_id for link in links]
     total = len(patient_ids)
     if not patient_ids:

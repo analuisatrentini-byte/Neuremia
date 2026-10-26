@@ -1,4 +1,4 @@
-# NeuroFlow - Politica LGPD Operacional
+# Neuremia - Politica LGPD Operacional
 
 Este documento e um ponto de partida tecnico. Antes de uso real com pacientes, deve ser revisado por advogado, encarregado/DPO e equipe clinica.
 
@@ -33,7 +33,7 @@ Este documento e um ponto de partida tecnico. Antes de uso real com pacientes, d
 
 - Usar HTTPS obrigatorio em producao.
 - Usar PostgreSQL gerenciado com backup criptografado.
-- Usar `NEUROFLOW_FIELD_ENCRYPTION_KEY` para criptografia de campos sensiveis.
+- Usar `NEUREMIA_FIELD_ENCRYPTION_KEY` para criptografia de campos sensiveis.
 - Guardar segredos em cofre do provedor, nunca no repositorio.
 - Rotacionar chaves de JWT e criptografia com plano de migracao.
 
@@ -50,7 +50,7 @@ Este documento e um ponto de partida tecnico. Antes de uso real com pacientes, d
 - Auditoria: `GET /me/audit-logs` permite consultar eventos associados ao usuario.
 - Retencao: `DELETE /me/clinical-data?days_older_than=365` remove dados clinicos antigos conforme prazo definido.
 - Exclusao: `DELETE /me` remove conta, vinculos, tokens e dados clinicos do usuario no backend.
-- Criptografia de campos sensiveis: diario, pensamentos, efeitos colaterais, mensagens de alerta e relatorios usam Fernet via `NEUROFLOW_FIELD_ENCRYPTION_KEY`.
+- Criptografia de campos sensiveis: diario, pensamentos, efeitos colaterais, mensagens de alerta e relatorios usam Fernet via `NEUREMIA_FIELD_ENCRYPTION_KEY`.
 
 Esses controles nao substituem revisao juridica. Eles sao base tecnica para implementar direitos do titular, retencao e auditoria.
 

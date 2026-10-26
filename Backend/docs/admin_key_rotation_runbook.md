@@ -8,7 +8,7 @@
 
 ## Background
 
-The `NEUROFLOW_ADMIN_API_KEY` environment variable gates all `/admin/*` endpoints
+The `NEUREMIA_ADMIN_API_KEY` environment variable gates all `/admin/*` endpoints
 (role promotion, user listing, token revocation). It is a shared secret: any operator
 who knows it can perform privileged actions. Rotation limits blast radius if the key
 is ever leaked (e.g. in a log, a screenshot, a Slack message).
@@ -35,12 +35,12 @@ Copy the output. Do **not** paste it into chat, email, or any logging system.
 **AWS Secrets Manager:**
 ```bash
 aws secretsmanager update-secret \
-  --secret-id neuroflow/prod/admin-api-key \
+  --secret-id neuremia/prod/admin-api-key \
   --secret-string "NEW_KEY_HERE"
 ```
 
 **Docker Compose (local/staging):**
-Edit `docker-compose.yml` → `environment.NEUROFLOW_ADMIN_API_KEY` and restart the service.
+Edit `docker-compose.yml` → `environment.NEUREMIA_ADMIN_API_KEY` and restart the service.
 
 **Heroku / Railway / Render:**
 Update the environment variable in the platform dashboard, then redeploy.

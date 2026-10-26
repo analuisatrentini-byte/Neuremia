@@ -7,7 +7,8 @@ Use only by backend operators. Surfaces:
 """
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -16,7 +17,128 @@ from ..dependencies import require_admin
 from ..services import user_read, utcnow
 
 
+"""_rate_limit_admin — 30 req / minute per admin key."""
+def _rate_limit_admin(request: Request):
+    return request.url.path.startswith("/admin")
+
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+
+
+@router.get("/ops/status", response_model=schemas.AdminOpsStatusResponse)
+def admin_ops_status(db: Session = Depends(get_db)):
+    """Aggregated production signal for operators, with no PHI in payload."""
+    now = utcnow()
+    day_ago = now - timedelta(days=1)
+
+    total_users = db.query(models.User).count()
+    patient_count = db.query(models.User).filter(models.User.role == models.UserRole.patient.value).count()
+    clinician_count = db.query(models.User).filter(models.User.role == models.UserRole.clinician.value).count()
+    active_sessions = (
+        db.query(models.RefreshToken)
+        .filter(
+            models.RefreshToken.revoked_at.is_(None),
+            models.RefreshToken.expires_at > now,
+        )
+        .count()
+    )
+    device_tokens = db.query(models.DeviceToken).count()
+    linked_patient_count = db.query(func.count(func.distinct(models.ClinicianPatientLink.patient_id))).scalar() or 0
+    unacknowledged_high_alerts = (
+        db.query(models.ClinicalAlert)
+        .filter(
+            models.ClinicalAlert.deleted_at.is_(None),
+            models.ClinicalAlert.acknowledged.is_(False),
+            models.ClinicalAlert.level == "high",
+        )
+        .count()
+    )
+    stale_high_alerts = (
+        db.query(models.ClinicalAlert)
+        .filter(
+            models.ClinicalAlert.deleted_at.is_(None),
+            models.ClinicalAlert.acknowledged.is_(False),
+            models.ClinicalAlert.level == "high",
+            models.ClinicalAlert.created_at < day_ago,
+        )
+        .count()
+    )
+    notification_failures_24h = (
+        db.query(models.NotificationLog)
+        .filter(
+            models.NotificationLog.created_at >= day_ago,
+            models.NotificationLog.status != "sent",
+        )
+        .count()
+    )
+    audit_events_24h = (
+        db.query(models.AuditLog)
+        .filter(models.AuditLog.created_at >= day_ago)
+        .count()
+    )
+
+    metrics = [
+        schemas.AdminOpsMetric(
+            name="accounts",
+            status="pass",
+            value=total_users,
+            detail=f"{patient_count} patients, {clinician_count} clinicians",
+        ),
+        schemas.AdminOpsMetric(
+            name="active_sessions",
+            status="pass",
+            value=active_sessions,
+            detail="Valid refresh sessions available for session recovery",
+        ),
+        schemas.AdminOpsMetric(
+            name="registered_devices",
+            status="pass" if device_tokens > 0 or total_users == 0 else "warn",
+            value=device_tokens,
+            detail="APNs device tokens registered" if device_tokens else "No push devices registered",
+        ),
+        schemas.AdminOpsMetric(
+            name="linked_patients",
+            status="pass" if linked_patient_count > 0 or clinician_count == 0 else "warn",
+            value=linked_patient_count,
+            detail="Patients shared with at least one clinician",
+        ),
+        schemas.AdminOpsMetric(
+            name="open_high_alerts",
+            status="warn" if unacknowledged_high_alerts else "pass",
+            value=unacknowledged_high_alerts,
+            detail="Unacknowledged high-risk clinical alerts",
+        ),
+        schemas.AdminOpsMetric(
+            name="stale_high_alerts_24h",
+            status="fail" if stale_high_alerts else "pass",
+            value=stale_high_alerts,
+            detail="High-risk alerts open for more than 24h",
+        ),
+        schemas.AdminOpsMetric(
+            name="notification_failures_24h",
+            status="warn" if notification_failures_24h else "pass",
+            value=notification_failures_24h,
+            detail="Failed notification attempts in the last 24h",
+        ),
+        schemas.AdminOpsMetric(
+            name="audit_events_24h",
+            status="pass" if audit_events_24h > 0 or total_users == 0 else "warn",
+            value=audit_events_24h,
+            detail="Audit log entries written in the last 24h",
+        ),
+    ]
+
+    if any(metric.status == "fail" for metric in metrics):
+        status = "degraded"
+    elif any(metric.status == "warn" for metric in metrics):
+        status = "attention"
+    else:
+        status = "operational"
+
+    return schemas.AdminOpsStatusResponse(
+        status=status,
+        generated_at=now,
+        metrics=metrics,
+    )
 
 
 @router.post("/refresh-tokens/purge", response_model=schemas.AdminPurgeResponse)

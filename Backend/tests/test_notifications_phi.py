@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from app.notifications import (
     GENERIC_ALERT_BODY,
     GENERIC_ALERT_SUBJECT,
+    GENERIC_CRITICAL_ALERT_BODY,
     GENERIC_REPORT_BODY,
     GENERIC_REPORT_SUBJECT,
     NotificationService,
@@ -18,6 +19,7 @@ def _make_service() -> NotificationService:
     service.smtp_password = "secret"
     service.sender = "alerts@test"
     service.push_webhook_url = "https://push.test/send"
+    service.sms_webhook_url = "https://sms.test/send"
     return service
 
 
@@ -98,7 +100,7 @@ def test_push_webhook_strips_phi_from_payload():
     assert ok
 
     payload = json.loads(captured_payload["body"])
-    assert payload["notification"]["title"] == "NeuroFlow"
+    assert payload["notification"]["title"] == "Neuremia"
     # Body must not contain the patient name or alert text the caller passed in.
     assert "Ana" not in payload["notification"]["body"]
     assert "ideacao" not in payload["notification"]["body"]
@@ -106,3 +108,77 @@ def test_push_webhook_strips_phi_from_payload():
 
     # Only allowlisted data fields survive; PHI-ish ones are dropped.
     assert payload["data"] == {"event_type": "clinical_alert", "patient_id": "42"}
+
+
+def test_critical_push_sets_apns_critical_payload_without_phi():
+    service = _make_service()
+    captured_payload = {}
+
+    class _FakeResponse:
+        status = 200
+
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_):
+            return False
+
+    def _fake_urlopen(req, timeout):
+        captured_payload["body"] = req.data
+        return _FakeResponse()
+
+    with patch("app.notifications.request.urlopen", side_effect=_fake_urlopen):
+        ok = service.send_push_webhook(
+            token="device-token",
+            title="Alerta de Ana",
+            body="Ideacao suicida positiva",
+            data={"event_type": "psychiatric_emergency", "patient_id": "42"},
+            critical=True,
+        )
+    assert ok
+
+    payload = json.loads(captured_payload["body"])
+    aps = payload["apns"]["payload"]["aps"]
+    assert aps["interruption-level"] == "critical"
+    assert aps["sound"]["critical"] == 1
+    assert "Ana" not in payload["notification"]["body"]
+    assert "Ideacao" not in payload["notification"]["body"]
+    assert payload["data"] == {"event_type": "psychiatric_emergency", "patient_id": "42"}
+
+
+def test_sms_webhook_uses_generic_body_without_phi():
+    service = _make_service()
+    captured_payload = {}
+
+    class _FakeResponse:
+        status = 200
+
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_):
+            return False
+
+    def _fake_urlopen(req, timeout):
+        captured_payload["body"] = req.data
+        return _FakeResponse()
+
+    with patch("app.notifications.request.urlopen", side_effect=_fake_urlopen):
+        ok = service.send_sms_webhook(
+            recipient="+5511999999999",
+            title="Alerta de Ana",
+            message="Ideacao suicida positiva",
+            data={
+                "event_type": "psychiatric_emergency",
+                "patient_id": "42",
+                "risk_title": "Alto",
+            },
+        )
+    assert ok
+
+    payload = json.loads(captured_payload["body"])
+    assert payload["recipient"] == "+5511999999999"
+    assert payload["body"] == GENERIC_CRITICAL_ALERT_BODY
+    assert "Ana" not in payload["body"]
+    assert "Ideacao" not in payload["body"]
+    assert payload["data"] == {"event_type": "psychiatric_emergency", "patient_id": "42"}

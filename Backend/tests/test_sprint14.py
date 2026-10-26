@@ -15,7 +15,7 @@ def test_access_jwt_contains_jti(client):
     from jose import jwt
     import os
 
-    decoded = jwt.decode(access, os.environ["NEUROFLOW_SECRET_KEY"], algorithms=["HS256"])
+    decoded = jwt.decode(access, os.environ["NEUREMIA_SECRET_KEY"], algorithms=["HS256"])
     assert "jti" in decoded
     assert len(decoded["jti"]) >= 10
 
@@ -51,7 +51,7 @@ def test_different_access_tokens_have_distinct_jtis(client):
     from jose import jwt
     import os
 
-    key = os.environ["NEUROFLOW_SECRET_KEY"]
+    key = os.environ["NEUREMIA_SECRET_KEY"]
     jti_a = jwt.decode(a["access_token"], key, algorithms=["HS256"])["jti"]
     jti_b = jwt.decode(b["access_token"], key, algorithms=["HS256"])["jti"]
     assert jti_a != jti_b

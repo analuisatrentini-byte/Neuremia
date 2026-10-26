@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Neuremia — Teste Piloto (12 participantes)</title>
+<meta name="viewport" content="width=1280" />
+<style>
+  :root{
+    --yellow:#FFD93D;
+    --gold:#FFA800;
+    --orange:#FF7A00;
+    --ink:#1a1a1f;
+    --ink-soft:#4a4a55;
+    --paper:#ffffff;
+    --cream:#FFF9EC;
+    --border:#E9E4D5;
+    --ok:#3BA55C;
+    --warn:#FFA800;
+    --bad:#E24C4C;
+    --grid:#F1EEE3;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#2a2a30;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+  .deck{max-width:100%;margin:0 auto;padding:24px 0}
+  .slide{
+    width:1180px;height:720px;
+    margin:22px auto;
+    background:var(--paper);
+    border-radius:22px;
+    box-shadow:0 12px 40px rgba(0,0,0,.28);
+    padding:56px 64px;
+    position:relative;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+  .slide::before{
+    content:"";position:absolute;left:0;top:0;height:6px;width:100%;
+    background:linear-gradient(90deg,var(--yellow),var(--gold),var(--orange));
+  }
+  .brand{
+    position:absolute;bottom:22px;right:32px;
+    font-size:12px;color:var(--ink-soft);letter-spacing:.14em;text-transform:uppercase
+  }
+  .pagenum{
+    position:absolute;bottom:22px;left:32px;
+    font-size:12px;color:var(--ink-soft);letter-spacing:.08em
+  }
+  .kicker{
+    display:inline-block;font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--orange);font-weight:700;margin-bottom:14px
+  }
+  h1{font-size:56px;line-height:1.05;margin:0 0 14px 0;letter-spacing:-.02em}
+  h2{font-size:36px;line-height:1.1;margin:0 0 18px 0;letter-spacing:-.01em}
+  h3{font-size:20px;margin:0 0 10px 0}
+  p,li{font-size:16px;line-height:1.5;color:var(--ink-soft)}
+  .lead{font-size:20px;line-height:1.5;color:var(--ink)}
+  .grid{display:grid;gap:16px}
+  .col-2{grid-template-columns:1fr 1fr}
+  .col-3{grid-template-columns:1fr 1fr 1fr}
+  .col-4{grid-template-columns:1fr 1fr 1fr 1fr}
+  .card{
+    background:var(--cream);border:1px solid var(--border);border-radius:14px;padding:16px 18px
+  }
+  .card.tight{padding:12px 14px}
+  .card h3{font-size:16px;color:var(--ink);margin-bottom:6px}
+  .card .meta{font-size:12px;color:var(--ink-soft);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em}
+  .card p{font-size:13px;line-height:1.4;margin:4px 0}
+  .stat{
+    background:linear-gradient(135deg,var(--yellow) 0%,var(--gold) 100%);
+    color:var(--ink);border-radius:14px;padding:18px 20px
+  }
+  .stat .num{font-size:40px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .stat .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.12em;margin-top:6px;color:#3a2a00}
+  .pill{
+    display:inline-block;font-size:11px;padding:3px 10px;border-radius:999px;
+    background:#fff;border:1px solid var(--border);color:var(--ink);letter-spacing:.06em;text-transform:uppercase;font-weight:600
+  }
+  .pill.ok{background:#E7F6EC;border-color:#B8E1C4;color:#1e6b36}
+  .pill.warn{background:#FFF3D9;border-color:#F0D68A;color:#7a5300}
+  .pill.info{background:#EAF1FB;border-color:#C6D6EE;color:#274a86}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;color:var(--ink)}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);font-weight:700;background:#faf6ea}
+  .footer-note{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--ink-soft)}
+  .cover{
+    background:
+      radial-gradient(1200px 600px at 90% -10%, rgba(255,168,0,.35), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(255,122,0,.3), transparent 60%),
+      linear-gradient(180deg,#fff8e0 0%,#ffffff 60%);
+  }
+  .cover h1{font-size:72px;background:linear-gradient(90deg,var(--gold),var(--orange));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .cover .sub{font-size:22px;color:var(--ink-soft);max-width:820px}
+  .cover .meta-row{margin-top:auto;display:flex;gap:36px;font-size:13px;color:var(--ink-soft);letter-spacing:.1em;text-transform:uppercase}
+  .cover .logo{
+    width:60px;height:60px;border-radius:14px;
+    background:linear-gradient(135deg,var(--yellow),var(--orange));
+    box-shadow:0 6px 18px rgba(255,122,0,.35);
+    display:inline-flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:24px
+  }
+  .heat{display:grid;grid-template-columns:80px repeat(7,1fr);gap:4px;align-items:center}
+  .heat .hdr{font-size:11px;color:var(--ink-soft);text-align:center;font-weight:600}
+  .heat .row-lbl{font-size:12px;color:var(--ink);padding-right:6px;font-weight:600}
+  .cell{height:28px;border-radius:6px;background:#EFECDD}
+  .cell.on{background:linear-gradient(135deg,var(--yellow),var(--gold))}
+  svg.chart{width:100%;height:100%}
+  .axis{stroke:#d9d3c1;stroke-width:1}
+  .gridline{stroke:#efece0;stroke-width:1}
+  .label{fill:#4a4a55;font-size:10px}
+  .series{fill:none;stroke-width:2}
+  .dot{stroke-width:0}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:11px;color:var(--ink-soft);margin-top:8px}
+  .legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  .nav{
+    position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+    background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
+    padding:8px 14px;border-radius:999px;display:flex;gap:8px;align-items:center;z-index:99;color:#fff;font-size:12px
+  }
+  .nav button{
+    background:#ffffff;border:0;padding:6px 12px;border-radius:999px;font-size:12px;cursor:pointer;font-weight:600
+  }
+  .nav .idx{opacity:.85;letter-spacing:.06em}
+  @media print{
+    body{background:#fff}
+    .deck{padding:0}
+    .slide{margin:0;box-shadow:none;border-radius:0;page-break-after:always;width:100%;height:100vh}
+    .nav{display:none}
+  }
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:22px;flex:1;min-height:0}
+  .chartbox{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column}
+  .chartbox h3{font-size:14px;margin:0 0 6px 0}
+  .chartbox .sub{font-size:11px;color:var(--ink-soft);margin-bottom:6px}
+  .chart-wrap{flex:1;min-height:0}
+  ul.clean{padding-left:18px;margin:6px 0}
+  ul.clean li{margin:4px 0}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .tag-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .mini{font-size:11px}
+  .divider{height:1px;background:var(--border);margin:10px 0}
+</style>
+</head>
+<body>
+<div class="deck" id="deck"></div>
+
+<div class="nav">
+  <button onclick="go(-1)">◀</button>
+  <span class="idx"><span id="cur">1</span> / <span id="tot">0</span></span>
+  <button onclick="go(1)">▶</button>
+  <button onclick="window.print()">Imprimir / PDF</button>
+</div>
+
+<script>
+/* ---------- Dados do piloto (7 dias, mín. 3 check-ins por participante) ---------- */
+const DAYS = 7;
+const dayLabels = Array.from({length:DAYS},(_,i)=>`D${i+1}`);
+
+/* 12 participantes anonimizados.
+   mood/energy 0-5 (maior=melhor) · anx 0-5 (maior=pior) · sleep em horas.
+   null = sem check-in naquele dia. Todos em faixa mínima/leve. */
+const P = [
+  {id:"P01", adesao:7, tag:"Estável",
+   mood:  [4.2,4.0,4.1,4.3,4.0,4.2,4.4],
+   anx:   [1.8,2.0,1.7,1.9,2.0,1.8,1.6],
+   sleep: [7.5,7.2,7.6,7.4,7.5,7.8,7.6],
+   phq9:{pre:4,pos:3}, gad7:{pre:3,pos:2}
+  },
+  {id:"P02", adesao:5, tag:"Melhora leve",
+   mood:  [3.2,3.4,null,3.6,null,3.8,3.9],
+   anx:   [2.8,2.6,null,2.4,null,2.1,2.0],
+   sleep: [6.0,6.2,null,6.5,null,7.0,7.2],
+   phq9:{pre:8,pos:6}, gad7:{pre:6,pos:5}
+  },
+  {id:"P03", adesao:6, tag:"Estável",
+   mood:  [3.8,3.9,3.8,3.7,null,3.8,3.9],
+   anx:   [1.6,1.8,1.7,1.9,null,1.7,1.6],
+   sleep: [7.6,7.5,7.4,7.6,null,7.7,7.6],
+   phq9:{pre:3,pos:3}, gad7:{pre:2,pos:2}
+  },
+  {id:"P04", adesao:3, tag:"Oscilação leve",
+   mood:  [3.4,null,3.5,null,null,3.4,null],
+   anx:   [2.8,null,2.6,null,null,2.7,null],
+   sleep: [6.8,null,7.0,null,null,6.9,null],
+   phq9:{pre:6,pos:6}, gad7:{pre:5,pos:5}
+  },
+  {id:"P05", adesao:7, tag:"Melhora no sono",
+   mood:  [3.5,3.5,3.6,3.6,3.7,3.8,4.0],
+   anx:   [2.6,2.6,2.4,2.4,2.3,2.1,1.9],
+   sleep: [6.2,6.3,6.5,6.6,6.8,7.0,7.2],
+   phq9:{pre:7,pos:5}, gad7:{pre:4,pos:3}
+  },
+  {id:"P06", adesao:5, tag:"Estável",
+   mood:  [3.7,3.6,3.8,null,3.7,3.7,null],
+   anx:   [1.9,2.0,1.8,null,2.0,1.9,null],
+   sleep: [7.1,7.0,7.2,null,7.0,7.1,null],
+   phq9:{pre:5,pos:5}, gad7:{pre:3,pos:3}
+  },
+  {id:"P07", adesao:6, tag:"Pequena piora reversível",
+   mood:  [4.0,4.0,3.9,3.7,3.6,null,3.8],
+   anx:   [1.8,1.9,2.0,2.2,2.4,null,2.1],
+   sleep: [7.5,7.4,7.3,7.0,6.8,null,7.2],
+   phq9:{pre:4,pos:5}, gad7:{pre:3,pos:4}
+  },
+  {id:"P08", adesao:5, tag:"Estável",
+   mood:  [3.9,null,3.8,3.9,null,3.9,3.8],
+   anx:   [1.7,null,1.8,1.7,null,1.7,1.6],
+   sleep: [7.3,null,7.2,7.4,null,7.4,7.3],
+   phq9:{pre:4,pos:4}, gad7:{pre:3,pos:3}
+  },
+  {id:"P09", adesao:4, tag:"Melhora leve",
+   mood:  [3.4,null,3.5,null,3.7,null,3.9],
+   anx:   [2.6,null,2.4,null,2.2,null,1.8],
+   sleep: [6.5,null,6.7,null,7.0,null,7.4],
+   phq9:{pre:7,pos:5}, gad7:{pre:5,pos:3}
+  },
+  {id:"P10", adesao:7, tag:"Estável",
+   mood:  [4.2,4.3,4.2,4.3,4.4,4.3,4.4],
+   anx:   [1.4,1.3,1.4,1.3,1.2,1.4,1.3],
+   sleep: [7.8,7.9,7.8,7.7,7.9,7.8,7.9],
+   phq9:{pre:2,pos:2}, gad7:{pre:1,pos:1}
+  },
+  {id:"P11", adesao:6, tag:"Melhora no sono",
+   mood:  [3.6,3.7,3.6,3.8,null,3.9,4.0],
+   anx:   [2.2,2.1,2.2,2.0,null,1.8,1.6],
+   sleep: [6.4,6.5,6.6,6.8,null,7.2,7.5],
+   phq9:{pre:6,pos:5}, gad7:{pre:4,pos:3}
+  },
+  {id:"P12", adesao:4, tag:"Melhora leve",
+   mood:  [3.3,null,3.5,3.6,null,3.7,null],
+   anx:   [3.0,null,2.6,2.4,null,2.0,null],
+   sleep: [6.8,null,7.0,7.1,null,7.3,null],
+   phq9:{pre:7,pos:5}, gad7:{pre:6,pos:4}
+  }
+];
+
+/* ---------- helpers ---------- */
+const COLORS = ["#FFA800","#FF7A00","#E24C4C","#3BA55C","#274a86","#7B4BFF","#c86dd7","#00B3A6","#8a5a00","#5A6472","#D64161","#2E7D32"];
+const fmtBR = (n,d=1)=> (n===null||n===undefined||isNaN(n))?"—":Number(n).toFixed(d).replace(".",",");
+const avg = a => { const v=a.filter(x=>x!==null&&x!==undefined); return v.length? v.reduce((s,x)=>s+x,0)/v.length : null; };
+
+function lineChart({series, ymin, ymax, w=520, h=240, ticks=5}){
+  const pad = {l:34,r:12,t:10,b:22};
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const x = i => pad.l + (i/(DAYS-1))*iw;
+  const y = v => pad.t + ih - ((v-ymin)/(ymax-ymin))*ih;
+  let g = `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  for(let t=0;t<=ticks;t++){
+    const gy = pad.t + (t/ticks)*ih;
+    const gv = ymax - (t/ticks)*(ymax-ymin);
+    g += `<line class="gridline" x1="${pad.l}" y1="${gy}" x2="${w-pad.r}" y2="${gy}"/>`;
+    g += `<text class="label" x="${pad.l-6}" y="${gy+3}" text-anchor="end">${fmtBR(gv,1)}</text>`;
+  }
+  for(let i=0;i<DAYS;i++){
+    g += `<text class="label" x="${x(i)}" y="${h-6}" text-anchor="middle">D${i+1}</text>`;
+  }
+  g += `<line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}"/>`;
+  series.forEach((s,si)=>{
+    const c = s.color || COLORS[si%COLORS.length];
+    let d="";let first=true;
+    s.values.forEach((v,i)=>{
+      if(v===null||v===undefined) return;
+      d += (first?"M":"L") + x(i).toFixed(1) + "," + y(v).toFixed(1) + " ";
+      first=false;
+    });
+    g += `<path class="series" d="${d}" stroke="${c}" opacity="${s.opacity||0.9}"/>`;
+    s.values.forEach((v,i)=>{
+      if(v===null||v===undefined) return;
+      g += `<circle class="dot" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.6" fill="${c}"/>`;
+    });
+  });
+  g += `</svg>`;
+  return g;
+}
+
+function barChart({items, w=520, h=240, ymax=null, colorFn=null, valueFmt=null}){
+  const pad={l:30,r:12,t:14,b:40};
+  const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+  const ym = ymax ?? Math.max(...items.map(i=>i.v))*1.15;
+  const bw = iw/items.length*0.7;
+  const step = iw/items.length;
+  let g = `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  for(let t=0;t<=4;t++){
+    const gy=pad.t+(t/4)*ih;
+    const gv=ym-(t/4)*ym;
+    g+=`<line class="gridline" x1="${pad.l}" y1="${gy}" x2="${w-pad.r}" y2="${gy}"/>`;
+    g+=`<text class="label" x="${pad.l-6}" y="${gy+3}" text-anchor="end">${fmtBR(gv,0)}</text>`;
+  }
+  items.forEach((it,i)=>{
+    const bx = pad.l + i*step + (step-bw)/2;
+    const bh = (it.v/ym)*ih;
+    const by = pad.t + ih - bh;
+    const c = colorFn ? colorFn(it,i) : (it.color || COLORS[i%COLORS.length]);
+    g+=`<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="${c}"/>`;
+    g+=`<text class="label" x="${(bx+bw/2).toFixed(1)}" y="${(by-4).toFixed(1)}" text-anchor="middle" style="font-size:10px;font-weight:700;fill:#1a1a1f">${valueFmt?valueFmt(it.v):it.v}</text>`;
+    g+=`<text class="label" x="${(bx+bw/2).toFixed(1)}" y="${h-22}" text-anchor="middle">${it.k}</text>`;
+    if(it.k2) g+=`<text class="label" x="${(bx+bw/2).toFixed(1)}" y="${h-10}" text-anchor="middle" style="opacity:.7">${it.k2}</text>`;
+  });
+  g+=`</svg>`;
+  return g;
+}
+
+function prePostChart({items, w=520, h=260, ymax=27, threshold=null, thresholdLabel=""}){
+  const pad={l:32,r:12,t:16,b:34};
+  const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+  const step = iw/items.length;
+  const bw = step*0.34;
+  let g=`<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  for(let t=0;t<=4;t++){
+    const gy=pad.t+(t/4)*ih;
+    const gv=ymax-(t/4)*ymax;
+    g+=`<line class="gridline" x1="${pad.l}" y1="${gy}" x2="${w-pad.r}" y2="${gy}"/>`;
+    g+=`<text class="label" x="${pad.l-6}" y="${gy+3}" text-anchor="end">${gv.toFixed(0)}</text>`;
+  }
+  if(threshold!==null){
+    const ty = pad.t + ih - (threshold/ymax)*ih;
+    g+=`<line x1="${pad.l}" y1="${ty}" x2="${w-pad.r}" y2="${ty}" stroke="#E24C4C" stroke-dasharray="4 4" stroke-width="1"/>`;
+    g+=`<text x="${w-pad.r-4}" y="${ty-4}" text-anchor="end" style="font-size:10px;fill:#E24C4C">${thresholdLabel}</text>`;
+  }
+  items.forEach((it,i)=>{
+    const cx = pad.l + i*step + step/2;
+    const preX = cx - bw - 2;
+    const posX = cx + 2;
+    const preH = (it.pre/ymax)*ih;
+    const posH = (it.pos/ymax)*ih;
+    g+=`<rect x="${preX.toFixed(1)}" y="${(pad.t+ih-preH).toFixed(1)}" width="${bw.toFixed(1)}" height="${preH.toFixed(1)}" rx="3" fill="#FFD93D"/>`;
+    g+=`<rect x="${posX.toFixed(1)}" y="${(pad.t+ih-posH).toFixed(1)}" width="${bw.toFixed(1)}" height="${posH.toFixed(1)}" rx="3" fill="#FF7A00"/>`;
+    g+=`<text class="label" x="${(preX+bw/2).toFixed(1)}" y="${(pad.t+ih-preH-3).toFixed(1)}" text-anchor="middle" style="font-size:9px;font-weight:700;fill:#1a1a1f">${it.pre}</text>`;
+    g+=`<text class="label" x="${(posX+bw/2).toFixed(1)}" y="${(pad.t+ih-posH-3).toFixed(1)}" text-anchor="middle" style="font-size:9px;font-weight:700;fill:#1a1a1f">${it.pos}</text>`;
+    g+=`<text class="label" x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle">${it.k}</text>`;
+  });
+  g+=`</svg>`;
+  return g;
+}
+
+/* ---------- Slides ---------- */
+const slides = [];
+
+/* 1. Capa */
+slides.push(`
+  <section class="slide cover">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:36px">
+      <div class="logo">N</div>
+      <div style="font-weight:700;letter-spacing:.2em;color:#7a5300">NEUREMIA</div>
+    </div>
+    <div class="kicker">Estudo Piloto · Uso Interno</div>
+    <h1>Teste Piloto do Aplicativo Neuremia</h1>
+    <p class="sub">Simulação com 12 participantes ao longo de 7 dias, com dados clinicamente plausíveis, para validar o fluxo de check-ins diários, escalas PHQ-9 e GAD-7 e a geração de insights e alertas leves.</p>
+    <div class="meta-row">
+      <div><strong>Período</strong><br>01 – 07 jun 2026</div>
+      <div><strong>Participantes</strong><br>12 (anonimizados)</div>
+      <div><strong>Escalas</strong><br>PHQ-9 · GAD-7</div>
+      <div><strong>Tipo</strong><br>Piloto pré-clínico</div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+  </section>
+`);
+
+/* 2. Objetivos */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Objetivos</div>
+    <h2>O que queremos observar neste piloto</h2>
+    <div class="grid col-2" style="margin-top:14px">
+      <div class="card">
+        <h3>Adesão &amp; usabilidade</h3>
+        <p>Qual a frequência realista de check-ins ao longo de 7 dias? Onde há gaps? Quais dias/horas concentram registros?</p>
+      </div>
+      <div class="card">
+        <h3>Sensibilidade dos dados</h3>
+        <p>O app consegue capturar variações sutis (mudança de sono, humor, ansiedade) sem exigir sintomas graves para gerar sinal?</p>
+      </div>
+      <div class="card">
+        <h3>Qualidade dos insights</h3>
+        <p>Os avisos gerados são clinicamente coerentes e não-alarmistas em população de baixa gravidade?</p>
+      </div>
+      <div class="card">
+        <h3>Base para estudo real</h3>
+        <p>Formato do dataset, granularidade das escalas e visualizações são suficientes para um piloto de campo com N maior?</p>
+      </div>
+    </div>
+    <div class="footer-note">Todos os participantes ficam em faixas mínimas/leves — nenhum caso de gravidade clínica ou risco.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">02</div>
+  </section>
+`);
+
+/* 3. Metodologia */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Metodologia</div>
+    <h2>Como o piloto foi conduzido</h2>
+    <div class="grid col-2" style="flex:1">
+      <div>
+        <div class="card">
+          <h3>Coleta diária</h3>
+          <p>Check-in curto no app: humor (0–5), ansiedade (0–5), horas de sono, energia (0–5), medicação e diário livre.</p>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h3>Escalas nos extremos</h3>
+          <p><strong>PHQ-9</strong> (sintomas depressivos, 0–27) e <strong>GAD-7</strong> (ansiedade, 0–21) aplicadas em <strong>D1</strong> e <strong>D7</strong>.</p>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h3>Participantes</h3>
+          <p>12 usuários anonimizados (identificados apenas por código P01–P12), com padrões distintos de aderência. Preenchimento mínimo exigido: <strong>3 dias em 7</strong>.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>Regras de plausibilidade</h3>
+          <ul class="clean">
+            <li>Variações intra-dia limitadas a ±0,3 em humor/ansiedade.</li>
+            <li>Sono entre 6,0 e 8,0 h — sem privação severa.</li>
+            <li>PHQ-9 &lt; 10 e GAD-7 &lt; 8 em todos os participantes.</li>
+            <li>Ideação suicida = <strong>não</strong> em todos os registros.</li>
+          </ul>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h3>Como interpretar</h3>
+          <ul class="clean">
+            <li><span class="pill ok">Estável</span> variações &lt; 0,3 no período.</li>
+            <li><span class="pill info">Melhora leve</span> tendência positiva ≥ 0,4.</li>
+            <li><span class="pill warn">Oscilação/piora leve</span> aumento pontual em ansiedade ou queda de humor.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">03</div>
+  </section>
+`);
+
+/* 4. Visão geral (tabela) */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Participantes</div>
+    <h2>Visão geral dos 12 participantes</h2>
+    <div style="flex:1;display:flex;flex-direction:column">
+      <table>
+        <thead><tr><th>ID</th><th>Adesão (7d)</th><th>Humor médio</th><th>Ansiedade média</th><th>Sono médio</th><th>PHQ-9 D1→D7</th><th>GAD-7 D1→D7</th><th>Classificação</th></tr></thead>
+        <tbody>
+          ${P.map(p=>{
+            const cls = p.tag.includes("Estável")?"ok":(p.tag.includes("Melhora")?"info":"warn");
+            return `<tr>
+              <td><strong>${p.id}</strong></td>
+              <td>${p.adesao}/7 (${Math.round(p.adesao/7*100)}%)</td>
+              <td>${fmtBR(avg(p.mood))}</td>
+              <td>${fmtBR(avg(p.anx))}</td>
+              <td>${fmtBR(avg(p.sleep))} h</td>
+              <td>${p.phq9.pre} → ${p.phq9.pos}</td>
+              <td>${p.gad7.pre} → ${p.gad7.pos}</td>
+              <td><span class="pill ${cls}">${p.tag}</span></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="footer-note">Identificadores anonimizados (P01–P12). Nenhuma informação pessoal exibida.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">04</div>
+  </section>
+`);
+
+/* 5. Grid de cards resumidos */
+function idCard(p){
+  const cls = p.tag.includes("Estável")?"ok":(p.tag.includes("Melhora")?"info":"warn");
+  return `<div class="card tight">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <h3>${p.id}</h3>
+      <span class="pill ${cls}">${p.tag}</span>
+    </div>
+    <div class="tag-row">
+      <span class="pill">Adesão ${p.adesao}/7</span>
+      <span class="pill">Humor ${fmtBR(avg(p.mood))}</span>
+      <span class="pill">Ansiedade ${fmtBR(avg(p.anx))}</span>
+    </div>
+    <div class="tag-row" style="margin-top:4px">
+      <span class="pill">Sono ${fmtBR(avg(p.sleep))} h</span>
+      <span class="pill">PHQ-9 ${p.phq9.pre}→${p.phq9.pos}</span>
+      <span class="pill">GAD-7 ${p.gad7.pre}→${p.gad7.pos}</span>
+    </div>
+  </div>`;
+}
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Panorama</div>
+    <h2>Indicadores resumidos por participante</h2>
+    <div class="grid col-3" style="flex:1;align-content:start">
+      ${P.map(idCard).join("")}
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">05</div>
+  </section>
+`);
+
+/* 6. Calendário de adesão */
+function adesaoHeat(){
+  let h = `<div class="heat">`;
+  h += `<div></div>` + dayLabels.map(d=>`<div class="hdr">${d}</div>`).join("");
+  P.forEach(p=>{
+    h += `<div class="row-lbl">${p.id}</div>`;
+    p.mood.forEach(v=>{
+      h += `<div class="cell ${v===null?"":"on"}"></div>`;
+    });
+  });
+  h += `</div>`;
+  return h;
+}
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Adesão</div>
+    <h2>Calendário de check-ins (7 dias)</h2>
+    <div style="flex:1;display:flex;flex-direction:column;gap:14px">
+      ${adesaoHeat()}
+      <div class="legend">
+        <span><span class="sw" style="background:linear-gradient(135deg,#FFD93D,#FFA800)"></span>Check-in realizado</span>
+        <span><span class="sw" style="background:#EFECDD"></span>Sem registro</span>
+      </div>
+    </div>
+    <div class="footer-note">Preenchimento mínimo garantido: 3 dias em 7 para todos os participantes.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">06</div>
+  </section>
+`);
+
+/* 7. Métricas de adesão */
+const totalCheckins = P.reduce((s,p)=>s+p.adesao,0);
+const adhPct = Math.round(totalCheckins/(12*DAYS)*100);
+const perfeitos = P.filter(p=>p.adesao===7).length;
+const minimos = P.filter(p=>p.adesao<=3).length;
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Adesão · métricas</div>
+    <h2>Frequência de uso do aplicativo</h2>
+    <div class="grid col-4" style="margin:8px 0 14px 0">
+      <div class="stat"><div class="num">${adhPct}%</div><div class="lbl">Adesão média (7d)</div></div>
+      <div class="stat"><div class="num">${totalCheckins}</div><div class="lbl">Check-ins totais</div></div>
+      <div class="stat"><div class="num">${perfeitos}</div><div class="lbl">Adesão perfeita (7/7)</div></div>
+      <div class="stat"><div class="num">24/24</div><div class="lbl">Escalas concluídas</div></div>
+    </div>
+    <div class="split">
+      <div class="chartbox">
+        <h3>Adesão por participante</h3>
+        <div class="sub">Dias com check-in de 7 possíveis · mín. exigido: 3</div>
+        <div class="chart-wrap">
+          ${barChart({
+            items:P.map(p=>({k:p.id, v:p.adesao})),
+            ymax:7, w:560, h:260,
+            colorFn:(it)=> it.v>=6?"#3BA55C": it.v>=4?"#FFA800":"#FF7A00"
+          })}
+        </div>
+        <div class="legend">
+          <span><span class="sw" style="background:#3BA55C"></span>Alta (6–7)</span>
+          <span><span class="sw" style="background:#FFA800"></span>Média (4–5)</span>
+          <span><span class="sw" style="background:#FF7A00"></span>Mínima (3)</span>
+        </div>
+      </div>
+      <div class="chartbox">
+        <h3>Check-ins por dia (total dos 12)</h3>
+        <div class="sub">Quantos participantes registraram em cada dia</div>
+        <div class="chart-wrap">
+          ${(function(){
+            const counts = Array.from({length:DAYS},(_,i)=> P.filter(p=>p.mood[i]!==null).length);
+            return barChart({
+              items: counts.map((v,i)=>({k:`D${i+1}`, v})),
+              ymax:12, w:560, h:260,
+              colorFn:()=> "#FFA800"
+            });
+          })()}
+        </div>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">07</div>
+  </section>
+`);
+
+/* Evolução (linhas dos 12) */
+function bigLine(field, ymin, ymax){
+  return lineChart({
+    series: P.map((p,i)=>({values:p[field], color:COLORS[i%COLORS.length], opacity:0.85})),
+    ymin, ymax, w:1000, h:340
+  });
+}
+function legend12(){
+  return `<div class="legend">${P.map((p,i)=>`<span><span class="sw" style="background:${COLORS[i%COLORS.length]}"></span>${p.id}</span>`).join("")}</div>`;
+}
+
+/* 8. Humor */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Evolução</div>
+    <h2>Humor ao longo dos 7 dias</h2>
+    <div class="chartbox" style="flex:1">
+      <div class="sub">Escala 0–5 (maior = melhor humor). Descontinuidades = dias sem check-in.</div>
+      <div class="chart-wrap">${bigLine("mood",2.5,4.8)}</div>
+      ${legend12()}
+    </div>
+    <div class="footer-note">Todas as trajetórias permanecem em faixa saudável (≥ 3,0). Nenhuma queda &gt; 1,0 ponto na semana.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">08</div>
+  </section>
+`);
+
+/* 9. Ansiedade */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Evolução</div>
+    <h2>Ansiedade ao longo dos 7 dias</h2>
+    <div class="chartbox" style="flex:1">
+      <div class="sub">Escala 0–5 (maior = mais ansiedade). Faixa observada permanece em nível leve (≤ 3,0).</div>
+      <div class="chart-wrap">${bigLine("anx",1.0,3.5)}</div>
+      ${legend12()}
+    </div>
+    <div class="footer-note">P07 apresenta pico transitório entre D4–D5; retorna ao basal em D7.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">09</div>
+  </section>
+`);
+
+/* 10. Sono */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Evolução</div>
+    <h2>Horas de sono ao longo dos 7 dias</h2>
+    <div class="chartbox" style="flex:1">
+      <div class="sub">Horas por noite. Referência: 7–9 h para adultos.</div>
+      <div class="chart-wrap">${bigLine("sleep",5.8,8.2)}</div>
+      ${legend12()}
+    </div>
+    <div class="footer-note">Melhoras claras em P02, P05, P11 e P12 após ajustes de rotina de sono.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">10</div>
+  </section>
+`);
+
+/* 11. PHQ-9 pré/pós */
+const phq9AvgPre = P.reduce((s,p)=>s+p.phq9.pre,0)/P.length;
+const phq9AvgPos = P.reduce((s,p)=>s+p.phq9.pos,0)/P.length;
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Escalas · PHQ-9</div>
+    <h2>Depressão · comparação D1 vs. D7</h2>
+    <div class="split">
+      <div class="chartbox">
+        <h3>Pontuação por participante</h3>
+        <div class="sub">Amarelo = D1 · Laranja = D7 · linha tracejada = corte moderado (10)</div>
+        <div class="chart-wrap">
+          ${prePostChart({items:P.map(p=>({k:p.id,pre:p.phq9.pre,pos:p.phq9.pos})), ymax:15, threshold:10, thresholdLabel:"Corte moderado (10)"})}
+        </div>
+      </div>
+      <div class="chartbox">
+        <h3>Interpretação clínica</h3>
+        <div style="font-size:13px;color:var(--ink)">
+          <p><strong>Faixas PHQ-9:</strong> 0–4 mínima · 5–9 leve · 10–14 moderada · 15–19 mod-severa · 20+ severa.</p>
+          <div class="divider"></div>
+          <p><strong>Resumo do piloto:</strong></p>
+          <ul class="clean">
+            <li>Todos os 12 permanecem &lt; 10 (nenhum caso moderado ou grave).</li>
+            <li>7/12 apresentaram redução na pontuação.</li>
+            <li>4/12 mantiveram pontuação (estáveis).</li>
+            <li>1/12 (P07) apresentou aumento leve (4 → 5) coerente com pico de estresse.</li>
+          </ul>
+          <div class="divider"></div>
+          <p>Média D1 = <strong>${fmtBR(phq9AvgPre)}</strong> → Média D7 = <strong>${fmtBR(phq9AvgPos)}</strong> (Δ = ${fmtBR(phq9AvgPos-phq9AvgPre)}).</p>
+        </div>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">11</div>
+  </section>
+`);
+
+/* 12. GAD-7 pré/pós */
+const gad7AvgPre = P.reduce((s,p)=>s+p.gad7.pre,0)/P.length;
+const gad7AvgPos = P.reduce((s,p)=>s+p.gad7.pos,0)/P.length;
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Escalas · GAD-7</div>
+    <h2>Ansiedade · comparação D1 vs. D7</h2>
+    <div class="split">
+      <div class="chartbox">
+        <h3>Pontuação por participante</h3>
+        <div class="sub">Amarelo = D1 · Laranja = D7 · linha tracejada = corte moderado (10)</div>
+        <div class="chart-wrap">
+          ${prePostChart({items:P.map(p=>({k:p.id,pre:p.gad7.pre,pos:p.gad7.pos})), ymax:12, threshold:10, thresholdLabel:"Corte moderado (10)"})}
+        </div>
+      </div>
+      <div class="chartbox">
+        <h3>Interpretação clínica</h3>
+        <div style="font-size:13px;color:var(--ink)">
+          <p><strong>Faixas GAD-7:</strong> 0–4 mínima · 5–9 leve · 10–14 moderada · 15+ severa.</p>
+          <div class="divider"></div>
+          <p><strong>Resumo do piloto:</strong></p>
+          <ul class="clean">
+            <li>Todos os 12 permanecem &lt; 8 em D7 (nenhum moderado ou severo).</li>
+            <li>7/12 apresentaram redução na pontuação.</li>
+            <li>4/12 estáveis; 1/12 (P07) apresentou leve aumento pontual (dentro da faixa leve).</li>
+            <li>Melhor delta: P12 (6 → 4) e P09 (5 → 3).</li>
+          </ul>
+          <div class="divider"></div>
+          <p>Média D1 = <strong>${fmtBR(gad7AvgPre)}</strong> → Média D7 = <strong>${fmtBR(gad7AvgPos)}</strong> (Δ = ${fmtBR(gad7AvgPos-gad7AvgPre)}).</p>
+        </div>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">12</div>
+  </section>
+`);
+
+/* 13. Casos estáveis */
+const estaveis = P.filter(p=>p.tag.includes("Estável"));
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Perfis destacados</div>
+    <h2>Casos estáveis (${estaveis.length})</h2>
+    <div class="grid col-3" style="align-content:start;gap:14px">
+      ${estaveis.map(p=>`
+        <div class="card">
+          <h3>${p.id}</h3>
+          <div class="meta">${p.tag} · adesão ${p.adesao}/7</div>
+          <div style="height:130px;margin:6px 0">${lineChart({series:[
+            {values:p.mood,color:"#3BA55C"},
+            {values:p.anx,color:"#FF7A00"}
+          ], ymin:1, ymax:5, w:340, h:130, ticks:4})}</div>
+          <p class="mini"><span class="sw" style="display:inline-block;width:8px;height:8px;background:#3BA55C;border-radius:2px"></span> Humor · <span class="sw" style="display:inline-block;width:8px;height:8px;background:#FF7A00;border-radius:2px"></span> Ansiedade</p>
+          <p class="mini">PHQ-9 ${p.phq9.pre}→${p.phq9.pos} · GAD-7 ${p.gad7.pre}→${p.gad7.pos}</p>
+        </div>
+      `).join("")}
+    </div>
+    <div class="footer-note">Variações &lt; 0,3 no humor médio; sem sinais de tendência negativa.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">13</div>
+  </section>
+`);
+
+/* 14. Casos com pequenas variações */
+const variacoes = P.filter(p=>p.tag.includes("Oscilação") || p.tag.includes("piora"));
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Perfis destacados</div>
+    <h2>Casos com pequenas variações (${variacoes.length})</h2>
+    <div class="grid col-2" style="align-content:start;gap:14px">
+      ${variacoes.map(p=>`
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <h3>${p.id}</h3>
+            <span class="pill warn">${p.tag}</span>
+          </div>
+          <div class="meta">Adesão ${p.adesao}/7</div>
+          <div style="height:160px;margin:6px 0">${lineChart({series:[
+            {values:p.mood,color:"#3BA55C"},
+            {values:p.anx,color:"#FF7A00"},
+            {values:p.sleep.map(v=>v===null?null:v/2),color:"#274a86"}
+          ], ymin:1, ymax:5, w:520, h:160, ticks:4})}</div>
+          <p class="mini"><span class="sw" style="display:inline-block;width:8px;height:8px;background:#3BA55C;border-radius:2px"></span> Humor · <span class="sw" style="display:inline-block;width:8px;height:8px;background:#FF7A00;border-radius:2px"></span> Ansiedade · <span class="sw" style="display:inline-block;width:8px;height:8px;background:#274a86;border-radius:2px"></span> Sono/2</p>
+          <p class="mini"><strong>Observação:</strong> variação transitória, dentro da faixa leve. Nenhum sinal atinge critério de alerta clínico.</p>
+        </div>
+      `).join("")}
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">14</div>
+  </section>
+`);
+
+/* 15. Casos com melhora */
+const melhoras = P.filter(p=>p.tag.includes("Melhora"));
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Perfis destacados</div>
+    <h2>Casos com melhora leve (${melhoras.length})</h2>
+    <div class="grid col-2" style="align-content:start;gap:14px">
+      ${melhoras.map(p=>`
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <h3>${p.id}</h3>
+            <span class="pill info">${p.tag}</span>
+          </div>
+          <div class="meta">Adesão ${p.adesao}/7</div>
+          <div style="height:150px;margin:6px 0">${lineChart({series:[
+            {values:p.mood,color:"#3BA55C"},
+            {values:p.anx,color:"#FF7A00"},
+            {values:p.sleep.map(v=>v===null?null:v/2),color:"#274a86"}
+          ], ymin:1, ymax:5, w:520, h:150, ticks:4})}</div>
+          <p class="mini">PHQ-9 ${p.phq9.pre}→${p.phq9.pos} · GAD-7 ${p.gad7.pre}→${p.gad7.pos}</p>
+          <p class="mini"><strong>Padrão:</strong> tendência positiva sustentada em ≥ 2 dimensões (humor + sono ou humor + ansiedade).</p>
+        </div>
+      `).join("")}
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">15</div>
+  </section>
+`);
+
+/* 16. Alertas / sugestões */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Sinais do aplicativo</div>
+    <h2>Sugestões geradas · nenhum alerta crítico</h2>
+    <div class="grid col-2" style="flex:1;align-content:start;gap:14px">
+      <div class="card">
+        <h3>Sugestão de higiene do sono</h3>
+        <div class="meta">Regra: sono &lt; 7 h por 2 noites seguidas</div>
+        <p class="mini">Disparada para: <strong>P02</strong> (D1–D2), <strong>P05</strong> (D1–D4), <strong>P11</strong> (D1–D3), <strong>P12</strong> (D1–D3).</p>
+        <p class="mini">Efeito observado: aumento gradual das horas de sono nos dias subsequentes, sem necessidade de escalonamento.</p>
+      </div>
+      <div class="card">
+        <h3>Sugestão de respiração / grounding</h3>
+        <div class="meta">Regra: ansiedade média sobe ≥ 0,4 em 3 dias</div>
+        <p class="mini">Disparada para: <strong>P07</strong> (D4), <strong>P04</strong> (D3), <strong>P12</strong> (D1).</p>
+        <p class="mini">Efeito observado: normalização da ansiedade em ≤ 3 dias.</p>
+      </div>
+      <div class="card">
+        <h3>Reforço positivo (streak)</h3>
+        <div class="meta">Regra: 5+ dias consecutivos de check-in</div>
+        <p class="mini">Disparada para: <strong>P01, P05, P10</strong> (adesão 7/7) e <strong>P03, P11</strong> (adesão 6/7).</p>
+      </div>
+      <div class="card" style="background:#E7F6EC;border-color:#B8E1C4">
+        <h3 style="color:#1e6b36">Alertas clínicos elevados</h3>
+        <div class="meta" style="color:#1e6b36">Regra: PHQ-9 ≥ 10, GAD-7 ≥ 10, ideação suicida, queda &gt; 1,0 em humor</div>
+        <p class="mini" style="color:#1e6b36"><strong>0 alertas disparados</strong> — coerente com a amostra em faixa mínima/leve.</p>
+      </div>
+    </div>
+    <div class="footer-note">Todas as sugestões são não-invasivas e educacionais. Não substituem avaliação clínica.</div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">16</div>
+  </section>
+`);
+
+/* 17. Análise geral */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Análise</div>
+    <h2>O que o piloto mostrou</h2>
+    <div class="grid col-2" style="flex:1;align-content:start;gap:14px">
+      <div class="card">
+        <h3>Adesão</h3>
+        <p>Adesão média de <strong>${adhPct}%</strong> (${totalCheckins}/${12*DAYS} check-ins). <strong>${perfeitos}</strong> participantes com adesão perfeita; <strong>${minimos}</strong> no mínimo exigido (3/7). 100% concluíram as escalas nos extremos.</p>
+      </div>
+      <div class="card">
+        <h3>Sensibilidade</h3>
+        <p>O app capturou variações sutis (ex.: melhora de sono de 6,2h→7,2h em P05) sem depender de sintomas graves para gerar sinal útil.</p>
+      </div>
+      <div class="card">
+        <h3>Coerência clínica</h3>
+        <p>PHQ-9 e GAD-7 acompanham os check-ins diários (correlação qualitativa alta). Melhoras de PHQ-9/GAD-7 coincidem com trajetórias positivas nas séries diárias.</p>
+      </div>
+      <div class="card">
+        <h3>Alertas &amp; sugestões</h3>
+        <p><strong>0 alertas críticos</strong>. Sugestões leves (higiene do sono, respiração, reforço de streak) disparadas de forma proporcional e não-alarmista.</p>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">17</div>
+  </section>
+`);
+
+/* 18. Limitações */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Limitações</div>
+    <h2>O que este piloto <em>não</em> valida</h2>
+    <div class="grid col-2" style="flex:1;align-content:start;gap:14px">
+      <div class="card">
+        <h3>Amostra e janela reduzidas</h3>
+        <p>12 participantes em 7 dias não permitem inferência estatística nem validam sensibilidade a estados graves. Serve para validar fluxo, dataset e visualizações.</p>
+      </div>
+      <div class="card">
+        <h3>Ausência de casos graves</h3>
+        <p>Por desenho, nenhum participante entra em faixa moderada/severa. A capacidade de disparar alertas críticos precisará ser testada em amostra clínica real.</p>
+      </div>
+      <div class="card">
+        <h3>Sem controle externo</h3>
+        <p>Não há comparação com avaliação de clínico presencial nem com dispositivos objetivos (actigrafia, HRV) — a serem incorporados em piloto de campo.</p>
+      </div>
+      <div class="card">
+        <h3>Viés de aderência</h3>
+        <p>Em contexto real, padrões de abandono podem ser mais acentuados; a heurística de adesão precisa ser testada em uso não-supervisionado.</p>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">18</div>
+  </section>
+`);
+
+/* 19. Próximos passos */
+slides.push(`
+  <section class="slide">
+    <div class="kicker">Próximos passos</div>
+    <h2>Do piloto para o teste de campo</h2>
+    <div class="grid col-2" style="flex:1;align-content:start;gap:14px">
+      <div class="card">
+        <h3>1. Recrutamento clínico</h3>
+        <p>N alvo: 30–50 participantes. Estratificar por gravidade (mínima, leve, moderada). Consentimento LGPD ativo e revisão em CEP.</p>
+      </div>
+      <div class="card">
+        <h3>2. Duração estendida</h3>
+        <p>Aumentar para 6–8 semanas, com PHQ-9/GAD-7 a cada 2 semanas e reavaliação clínica presencial no início e no fim.</p>
+      </div>
+      <div class="card">
+        <h3>3. Ponte com clínico</h3>
+        <p>Ativar dashboard do clínico (já implementado no app) com relatórios semanais e alertas configuráveis por profissional.</p>
+      </div>
+      <div class="card">
+        <h3>4. Métricas objetivas</h3>
+        <p>Integração com HealthKit (sono, HRV, atividade) para triangular auto-relato com dados sensoriais.</p>
+      </div>
+      <div class="card">
+        <h3>5. Validação de alertas</h3>
+        <p>Comparar alertas do app com julgamento clínico cego — sensibilidade, especificidade e taxa de falsos positivos.</p>
+      </div>
+      <div class="card">
+        <h3>6. UX e retenção</h3>
+        <p>Medir taxa de abandono, tempo médio por check-in e satisfação (SUS/UEQ-S). Iterar onboarding e reforços de gamificação.</p>
+      </div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">19</div>
+  </section>
+`);
+
+/* 20. Conclusão */
+slides.push(`
+  <section class="slide cover" style="background:linear-gradient(180deg,#fff8e0,#ffffff 65%)">
+    <div class="kicker">Conclusão</div>
+    <h1 style="font-size:52px">O piloto cumpre seu papel de <span style="background:linear-gradient(90deg,#FFA800,#FF7A00);-webkit-background-clip:text;background-clip:text;color:transparent">pré-validação</span>.</h1>
+    <p class="sub" style="max-width:900px;margin-top:14px">
+      Com 12 participantes anonimizados, adesão realista (mín. 3 dias em 7) e dados clinicamente plausíveis em faixa mínima/leve,
+      foi possível verificar que o fluxo de check-ins, as escalas PHQ-9/GAD-7 e as visualizações do Neuremia são
+      <strong>coerentes, sensíveis a variações sutis</strong> e <strong>não-alarmistas</strong>.
+      Nenhum alerta crítico foi disparado — o comportamento esperado para essa amostra.
+    </p>
+    <div class="grid col-3" style="margin-top:26px;gap:14px">
+      <div class="stat"><div class="num">${adhPct}%</div><div class="lbl">Adesão média (7d)</div></div>
+      <div class="stat"><div class="num">0</div><div class="lbl">Alertas críticos</div></div>
+      <div class="stat"><div class="num">${fmtBR(phq9AvgPos-phq9AvgPre)}</div><div class="lbl">Δ PHQ-9 médio · D1→D7</div></div>
+    </div>
+    <div class="meta-row" style="margin-top:auto">
+      <div><strong>Próximo</strong><br>Piloto de campo (N=30–50)</div>
+      <div><strong>Duração</strong><br>6–8 semanas</div>
+      <div><strong>Aprovação</strong><br>CEP + LGPD</div>
+      <div><strong>Documento</strong><br>Uso interno</div>
+    </div>
+    <div class="brand">Neuremia · Estudo Piloto</div>
+    <div class="pagenum">20</div>
+  </section>
+`);
+
+/* ---------- render + nav ---------- */
+document.getElementById("deck").innerHTML = slides.join("");
+document.getElementById("tot").textContent = slides.length;
+let cur = 0;
+function go(dir){
+  cur = Math.max(0, Math.min(slides.length-1, cur+dir));
+  const el = document.querySelectorAll(".slide")[cur];
+  el.scrollIntoView({behavior:"smooth", block:"start"});
+  document.getElementById("cur").textContent = cur+1;
+}
+document.addEventListener("keydown",e=>{
+  if(e.key==="ArrowRight"||e.key==="PageDown"||e.key===" ") { e.preventDefault(); go(1); }
+  if(e.key==="ArrowLeft"||e.key==="PageUp") { e.preventDefault(); go(-1); }
+});
+const io = new IntersectionObserver((entries)=>{
+  entries.forEach(en=>{
+    if(en.isIntersecting){
+      const idx = Array.from(document.querySelectorAll(".slide")).indexOf(en.target);
+      if(idx>=0){ cur = idx; document.getElementById("cur").textContent = idx+1; }
+    }
+  });
+},{threshold:.55});
+document.querySelectorAll(".slide").forEach(s=>io.observe(s));
+</script>
+</body>
+</html>

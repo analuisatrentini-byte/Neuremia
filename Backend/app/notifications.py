@@ -2,7 +2,7 @@
 
 Bodies are deliberately generic: they never contain the patient's name,
 the alert title, the clinical summary, or any other PHI text. Receivers
-are expected to open the NeuroFlow app to fetch the actual content, where
+are expected to open the Neuremia app to fetch the actual content, where
 the data is fetched over the authenticated, encrypted backend channel.
 """
 import os
@@ -24,17 +24,22 @@ _PUSH_CIRCUIT_THRESHOLD = 5
 _PUSH_CIRCUIT_RESET_SECONDS = 60
 
 
-GENERIC_ALERT_SUBJECT = "NeuroFlow: nova atualizacao clinica"
+GENERIC_ALERT_SUBJECT = "Neuremia: nova atualizacao clinica"
 GENERIC_ALERT_BODY = (
     "Ha informacao clinica nova vinculada a um paciente sob seu acompanhamento. "
-    "Abra o aplicativo NeuroFlow para revisar com seguranca. "
+    "Abra o aplicativo Neuremia para revisar com seguranca. "
     "Este e-mail nao contem dados sensiveis."
 )
+GENERIC_CRITICAL_ALERT_BODY = (
+    "Ha uma atualizacao clinica urgente no Neuremia. "
+    "Abra o app para revisar com seguranca. "
+    "Esta mensagem nao contem dados sensiveis."
+)
 
-GENERIC_REPORT_SUBJECT = "NeuroFlow: novo relatorio para revisao"
+GENERIC_REPORT_SUBJECT = "Neuremia: novo relatorio para revisao"
 GENERIC_REPORT_BODY = (
     "Um novo relatorio clinico esta disponivel para um paciente sob seu cuidado. "
-    "Abra o aplicativo NeuroFlow para revisar com seguranca. "
+    "Abra o aplicativo Neuremia para revisar com seguranca. "
     "Este e-mail nao contem dados sensiveis."
 )
 
@@ -46,7 +51,9 @@ class NotificationService:
         self.smtp_user = os.getenv("SMTP_USER", "")
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.sender = os.getenv("ALERT_FROM_EMAIL", self.smtp_user)
-        self.sms_webhook_url = os.getenv("SMS_WEBHOOK_URL", "")
+        self.sms_webhook_url = self._validated_webhook_url(
+            os.getenv("SMS_WEBHOOK_URL", "")
+        )
         # Circuit breaker state for push webhook
         self._push_consecutive_failures = 0
         self._push_circuit_open_until = 0.0
@@ -116,7 +123,7 @@ class NotificationService:
         # let through SMTP. The reset endpoint validates it server-side.
         return self._send_generic_email(
             recipient,
-            "NeuroFlow: recuperacao de senha",
+            "Neuremia: recuperacao de senha",
             "\n".join([
                 "Recebemos uma solicitacao de recuperacao de senha.",
                 "",
@@ -141,6 +148,7 @@ class NotificationService:
         title: str,
         body: str,
         data: dict | None = None,
+        critical: bool = False,
     ) -> bool:
         """Push notifications go through a generic worker (Firebase/APNs).
         We can't trust that worker to be a HIPAA/LGPD business associate, so
@@ -157,19 +165,35 @@ class NotificationService:
             if k in {"event_type", "patient_id"}
         }
 
+        aps: dict = {
+            "sound": "default",
+            "badge": 1,
+        }
+        if critical:
+            aps = {
+                "interruption-level": "critical",
+                "sound": {
+                    "critical": 1,
+                    "name": "default",
+                    "volume": 1.0,
+                },
+                "badge": 1,
+            }
+
         payload = json.dumps({
             "token": token,
             "notification": {
-                "title": "NeuroFlow",
-                "body": "Nova atualizacao clinica disponivel. Abra o app para detalhes.",
+                "title": "Neuremia",
+                "body": (
+                    "Atualizacao clinica urgente. Abra o app para detalhes."
+                    if critical else
+                    "Nova atualizacao clinica disponivel. Abra o app para detalhes."
+                ),
             },
             "data": safe_data,
             "apns": {
                 "payload": {
-                    "aps": {
-                        "sound": "default",
-                        "badge": 1,
-                    }
+                    "aps": aps,
                 }
             },
         }).encode("utf-8")
@@ -200,6 +224,41 @@ class NotificationService:
             self._push_circuit_open_until = time.monotonic() + _PUSH_CIRCUIT_RESET_SECONDS
             self._push_consecutive_failures = 0
         return False
+
+    def send_sms_webhook(
+        self,
+        recipient: str,
+        title: str,
+        message: str,
+        data: dict | None = None,
+    ) -> bool:
+        """Optional SMS bridge for emergencies. Title/message are accepted for
+        API compatibility but never sent, because SMS is not a PHI-safe channel."""
+        del title, message
+        if not self.sms_webhook_url:
+            return False
+
+        safe_data = {
+            k: v for k, v in (data or {}).items()
+            if k in {"event_type", "patient_id"}
+        }
+        payload = json.dumps({
+            "recipient": recipient,
+            "body": GENERIC_CRITICAL_ALERT_BODY,
+            "data": safe_data,
+        }).encode("utf-8")
+
+        req = request.Request(
+            self.sms_webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=5) as response:
+                return 200 <= response.status < 300
+        except Exception:
+            return False
 
 
 notifications = NotificationService()

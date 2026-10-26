@@ -101,6 +101,73 @@ def test_clinician_sees_patient_only_after_invite_accepted(client, admin_api_key
     assert response.status_code == 200
 
 
+def test_clinician_patient_link_requires_accepted_invite(client, admin_api_key):
+    patient = register(client, email="orphan-link-patient@example.com")
+    clinician = register(client, email="orphan-link-doc@example.com")
+    promote_to_clinician(client, user_id=clinician["user"]["id"], admin_key=admin_api_key)
+    doc_token = login(client, email="orphan-link-doc@example.com")
+
+    from app import models
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        db.add(models.ClinicianPatientLink(
+            clinician_id=clinician["user"]["id"],
+            patient_id=patient["user"]["id"],
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/v1/patients/{patient['user']['id']}/checkins",
+        headers=_bearer(doc_token),
+    )
+    assert response.status_code == 403
+
+    listing = client.get("/v1/clinician/patients", headers=_bearer(doc_token))
+    assert listing.status_code == 200
+    assert listing.json()["items"] == []
+
+    patient_listing = client.get("/v1/me/linked-clinicians", headers=_bearer(login(client, email="orphan-link-patient@example.com")))
+    assert patient_listing.status_code == 200
+    assert patient_listing.json() == []
+
+
+def test_other_clinician_cannot_view_accepted_patient_link(client, admin_api_key):
+    patient = register(client, email="specific-patient@example.com")
+    linked_doc = register(client, email="linked-doc@example.com")
+    other_doc = register(client, email="other-doc@example.com")
+    promote_to_clinician(client, user_id=linked_doc["user"]["id"], admin_key=admin_api_key)
+    promote_to_clinician(client, user_id=other_doc["user"]["id"], admin_key=admin_api_key)
+
+    pat_token = login(client, email="specific-patient@example.com")
+    linked_doc_token = login(client, email="linked-doc@example.com")
+    other_doc_token = login(client, email="other-doc@example.com")
+
+    invite = client.post(
+        "/v1/clinician/invites",
+        json={"patient_email": "specific-patient@example.com"},
+        headers=_bearer(linked_doc_token),
+    )
+    assert invite.status_code == 200
+    accept = client.post(f"/v1/me/invites/{invite.json()['id']}/accept", headers=_bearer(pat_token))
+    assert accept.status_code == 200
+
+    linked_response = client.get(
+        f"/v1/patients/{patient['user']['id']}/checkins",
+        headers=_bearer(linked_doc_token),
+    )
+    assert linked_response.status_code == 200
+
+    other_response = client.get(
+        f"/v1/patients/{patient['user']['id']}/checkins",
+        headers=_bearer(other_doc_token),
+    )
+    assert other_response.status_code == 403
+
+
 def test_clinician_role_required_for_clinician_patients_listing(client):
     register(client, email="patient3@example.com")
     token = login(client, email="patient3@example.com")

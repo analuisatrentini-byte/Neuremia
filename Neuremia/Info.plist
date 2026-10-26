@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>$(INFOPLIST_KEY_CFBundleDisplayName)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NeuremiaAPIBaseURL</key>
+	<string>$(INFOPLIST_KEY_NeuremiaAPIBaseURL)</string>
+	<key>NeuremiaPinnedCertHashes</key>
+	<string>$(INFOPLIST_KEY_NeuremiaPinnedCertHashes)</string>
+	<key>NeuremiaPolicyVersion</key>
+	<string>$(INFOPLIST_KEY_NeuremiaPolicyVersion)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>ALTB.Neuremia.backup-refresh</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>A Neuremia usa a câmera, somente quando você inicia a medição, para estimar sinais corporais pelo dedo sem salvar imagens.</string>
+		<key>NSHealthShareUsageDescription</key>
+		<string>A Neuremia lê sono, passos, frequência cardíaca, HRV e energia do Apple Health para complementar seus registros de bem-estar.</string>
+		<key>NSHealthUpdateUsageDescription</key>
+		<string>A Neuremia pode registrar dados de bem-estar no Apple Health somente quando você autorizar, para manter seus acompanhamentos pessoais sincronizados com o app Saúde.</string>
+		<key>NSMicrophoneUsageDescription</key>
+	<string>A Neuremia usa o microfone, somente quando você inicia a análise, para estimar sinais de voz sem salvar áudio.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

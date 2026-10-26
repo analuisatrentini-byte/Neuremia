@@ -1,11 +1,11 @@
-"""Shared in-process rate limiter for the NeuroFlow API.
+"""Shared in-process rate limiter for the Neuremia API.
 
 Sprint B Lote 4: agora respeita `X-Forwarded-For` quando atrás de proxy
 (uvicorn precisa rodar com `--proxy-headers --forwarded-allow-ips=<lb_cidr>`)
-e suporta storage Redis via `NEUROFLOW_RATE_LIMIT_STORAGE_URI`. Sem proxy,
+e suporta storage Redis via `NEUREMIA_RATE_LIMIT_STORAGE_URI`. Sem proxy,
 sem Redis: cai pro `get_remote_address` + in-memory original.
 
-Disabled when `NEUROFLOW_ENV=test` so the pytest suite can hammer auth
+Disabled when `NEUREMIA_ENV=test` so the pytest suite can hammer auth
 endpoints without tripping its own throttles.
 """
 import os
@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 
 
-_RATE_LIMIT_ENABLED = os.getenv("NEUROFLOW_ENV", "").lower() != "test"
+_RATE_LIMIT_ENABLED = os.getenv("NEUREMIA_ENV", "").lower() != "test"
 
 
 def _client_identifier(request: Request) -> str:
@@ -26,7 +26,7 @@ def _client_identifier(request: Request) -> str:
     o trust list confere, lemos o header `X-Forwarded-For` (primeiro IP).
     Quando não há proxy, `get_remote_address` continua sendo a fonte.
     """
-    if os.getenv("NEUROFLOW_TRUST_PROXY_HEADERS", "").lower() in {"1", "true", "yes"}:
+    if os.getenv("NEUREMIA_TRUST_PROXY_HEADERS", "").lower() in {"1", "true", "yes"}:
         forwarded = request.headers.get("x-forwarded-for") or ""
         first = forwarded.split(",")[0].strip()
         if first:
@@ -37,7 +37,7 @@ def _client_identifier(request: Request) -> str:
 # Sprint B: storage_uri opcional para Redis. Em produção com N workers,
 # storage in-memory significa que o limite efetivo é `N × declared_limit`.
 # `redis://localhost:6379` ou `redis://user:pass@host:port/db` consolidam.
-_storage_uri = os.getenv("NEUROFLOW_RATE_LIMIT_STORAGE_URI", "")
+_storage_uri = os.getenv("NEUREMIA_RATE_LIMIT_STORAGE_URI", "")
 
 _limiter_kwargs = {
     "key_func": _client_identifier,

@@ -56,6 +56,19 @@ class AdminRevokeSessionsResponse(BaseModel):
     revoked_refresh_tokens: int
 
 
+class AdminOpsMetric(BaseModel):
+    name: str
+    status: Literal["pass", "warn", "fail"]
+    value: int
+    detail: str
+
+
+class AdminOpsStatusResponse(BaseModel):
+    status: Literal["operational", "attention", "degraded"]
+    generated_at: datetime
+    metrics: list[AdminOpsMetric]
+
+
 class ClinicianInviteCreate(BaseModel):
     patient_email: EmailStr
 
@@ -271,6 +284,8 @@ class ClinicalAlertRead(BaseModel):
     patient_id: int
     created_at: datetime
     level: str
+    alert_type: Literal["psychiatric_emergency", "clinical_watch", "self_signal"] = "psychiatric_emergency"
+    escalation_target: Literal["clinician_caregiver_now", "clinician_digest", "patient_only"] = "clinician_caregiver_now"
     title: str
     message: str
     acknowledged: bool
@@ -389,3 +404,74 @@ class PatientListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+# --- Personal baselines & intervention log (retention/learning loop) ---
+
+BaselineMetricLiteral = Literal[
+    "mood", "anxiety", "energy", "irritability", "sleep_hours",
+]
+
+InterventionTypeLiteral = Literal[
+    "breathing",
+    "walk",
+    "sleep_hygiene",
+    "journaling",
+    "medication_adherence",
+    "social_contact",
+    "mindfulness",
+    "therapy_technique",
+]
+
+InterventionTriggerSourceLiteral = Literal[
+    "user_manual", "alert", "app_suggestion",
+]
+
+
+class UserBaselineRead(BaseModel):
+    """One rolling baseline row. `z_score` is derived (mean-based) so callers
+    can render "your last check-in was N std below your normal" without
+    recomputing it client-side."""
+    metric: BaselineMetricLiteral
+    window_days: int
+    sample_count: int
+    mean_value: float
+    stdev_value: float
+    current_value: float
+    z_score: float
+    computed_at: datetime
+
+
+class InterventionLogCreate(BaseModel):
+    intervention_type: InterventionTypeLiteral
+    trigger_source: InterventionTriggerSourceLiteral = "user_manual"
+    notes: str = Field(default="", max_length=2000)
+
+
+class InterventionLogRead(BaseModel):
+    id: int
+    patient_id: int
+    intervention_type: InterventionTypeLiteral
+    trigger_source: InterventionTriggerSourceLiteral
+    triggered_at: datetime
+    notes: str
+    outcome_computed_at: datetime | None = None
+    outcome_delta: dict[str, float] | None = None
+
+
+class InterventionInsight(BaseModel):
+    """Aggregate delta per intervention family. `sample_size` is exposed so the
+    UI can gate presentation on statistical confidence (we hide anything with
+    fewer than 3 observations)."""
+    intervention_type: InterventionTypeLiteral
+    sample_size: int
+    avg_mood_delta: float
+    avg_anxiety_delta: float
+    avg_energy_delta: float
+    avg_sleep_delta: float
+    is_significant: bool
+
+
+class InterventionInsightsResponse(BaseModel):
+    insights: list[InterventionInsight]
+    pending_outcomes: int

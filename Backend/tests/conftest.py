@@ -1,4 +1,4 @@
-"""Shared fixtures for the NeuroFlow backend test suite.
+"""Shared fixtures for the Neuremia backend test suite.
 
 Each test gets a fresh on-disk SQLite database under tmp_path and a TestClient
 wired to an isolated session. Required env vars are stamped before
@@ -13,18 +13,18 @@ import pytest
 
 
 def _stamp_test_env() -> None:
-    os.environ.setdefault("NEUROFLOW_ENV", "test")
-    os.environ.setdefault("NEUROFLOW_SECRET_KEY", "test-" + secrets.token_urlsafe(32))
-    os.environ.setdefault("NEUROFLOW_ADMIN_API_KEY", "test-admin-" + secrets.token_urlsafe(16))
+    os.environ.setdefault("NEUREMIA_ENV", "test")
+    os.environ.setdefault("NEUREMIA_SECRET_KEY", "test-" + secrets.token_urlsafe(32))
+    os.environ.setdefault("NEUREMIA_ADMIN_API_KEY", "test-admin-" + secrets.token_urlsafe(16))
     # Field encryption key: use a deterministic Fernet key for test isolation.
     os.environ.setdefault(
-        "NEUROFLOW_FIELD_ENCRYPTION_KEY",
+        "NEUREMIA_FIELD_ENCRYPTION_KEY",
         "qBJ2VkpKMxFhMQXfYrt3VRPUe6Cz2cQ2Si2dXJI4i3M=",
     )
     # Allow tests to operate without tripping the slowapi rate limits added
     # in Sprint 13.
-    os.environ.setdefault("NEUROFLOW_ALLOWED_ORIGINS", "*")
-    os.environ.setdefault("NEUROFLOW_ALLOWED_HOSTS", "*")
+    os.environ.setdefault("NEUREMIA_ALLOWED_ORIGINS", "*")
+    os.environ.setdefault("NEUREMIA_ALLOWED_HOSTS", "*")
 
 
 _stamp_test_env()
@@ -90,7 +90,7 @@ def client(monkeypatch: pytest.MonkeyPatch, db_url: str) -> Iterator:
 
 @pytest.fixture
 def admin_api_key() -> str:
-    return os.environ["NEUROFLOW_ADMIN_API_KEY"]
+    return os.environ["NEUREMIA_ADMIN_API_KEY"]
 
 
 # ---- registration / login helpers -------------------------------------------

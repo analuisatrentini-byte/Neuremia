@@ -1,10 +1,10 @@
-# NeuroFlow - Protocolo de Validacao Clinica do Motor de Risco
+# Neuremia - Protocolo de Validacao Clinica do Motor de Risco
 
 O motor atual e heuristico. Ele nao deve ser apresentado como diagnostico automatico. Para uso clinico real, seguir este plano antes de qualquer afirmacao de eficacia.
 
 ## Objetivo
 
-Avaliar se os alertas do NeuroFlow identificam piora clinica, risco suicida, baixa adesao, alteracao de sono e possiveis episodios depressivos/maniacos com seguranca suficiente para apoio a decisao clinica.
+Avaliar se os alertas do Neuremia identificam piora clinica, risco suicida, baixa adesao, alteracao de sono e possiveis episodios depressivos/maniacos com seguranca suficiente para apoio a decisao clinica.
 
 ## Padrao de referencia
 

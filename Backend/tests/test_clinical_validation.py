@@ -1,4 +1,4 @@
-"""Clinical Scoring Validation Tests — NeuroFlow
+"""Clinical Scoring Validation Tests — Neuremia
 
 Validates PHQ-9, GAD-7, and YMRS scoring algorithms against gold-standard
 answer sets derived from published validation studies. These tests MUST pass
@@ -96,7 +96,7 @@ def test_phq9_item9_positive_creates_high_alert(client):
     check-in is also submitted. Verifies full audit trail."""
     from .conftest import grant_consent, login, promote_to_clinician, register
 
-    admin_key = __import__("os").environ["NEUROFLOW_ADMIN_API_KEY"]
+    admin_key = __import__("os").environ["NEUREMIA_ADMIN_API_KEY"]
 
     patient = register(client, email="phq9_item9@test.com")
     patient_token = login(client, email="phq9_item9@test.com")
@@ -479,6 +479,8 @@ def test_high_risk_checkin_triggers_clinical_alert_via_api(client):
     export = client.get("/v1/me/export", headers=_bearer(token)).json()
     high_alerts = [a for a in export["alerts"] if a["level"] == "high"]
     assert high_alerts, "suicidal_ideation=True must produce a high-level alert"
+    assert high_alerts[0]["alert_type"] == "psychiatric_emergency"
+    assert high_alerts[0]["escalation_target"] == "clinician_caregiver_now"
 
 
 def test_normal_checkin_does_not_trigger_alert(client):

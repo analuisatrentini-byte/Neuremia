@@ -1,0 +1,25 @@
+// Release.xcconfig — Neuremia
+// Nome exibido no Springboard e nas alerts do sistema.
+INFOPLIST_KEY_CFBundleDisplayName = Neuremia
+
+// Set INFOPLIST_KEY_* values here (or in Xcode's Build Settings > User-Defined)
+// for App Store / TestFlight builds. Never commit real values to this file —
+// use CI environment variable injection instead.
+//
+// HOW TO OBTAIN THE CERTIFICATE HASH:
+//   openssl s_client -connect api.your-domain.com:443 </dev/null 2>/dev/null \
+//     | openssl x509 -outform DER \
+//     | shasum -a 256 \
+//     | awk '{print $1}'
+// Comma-separate multiple hashes for rotation overlap (current + next cert).
+
+// REQUIRED for account/backend features. Missing or placeholder values fail
+// safely at runtime instead of crashing the app.
+INFOPLIST_KEY_NeuremiaAPIBaseURL = https:/$()/api.your-domain.com
+
+// OPTIONAL — comma-separated SHA-256 DER hashes of allowed server certificates.
+// Leave empty to use standard iOS TLS trust evaluation.
+INFOPLIST_KEY_NeuremiaPinnedCertHashes =
+
+// Legal document version. Increment when ToS or Privacy Policy changes.
+INFOPLIST_KEY_NeuremiaPolicyVersion = 1.1

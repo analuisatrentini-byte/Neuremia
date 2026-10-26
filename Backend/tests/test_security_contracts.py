@@ -1,4 +1,4 @@
-"""Security contracts — NeuroFlow audit round 3.
+"""Security contracts — Neuremia audit round 3.
 
 Each test locks in a specific security or data-integrity behaviour so that
 future refactors cannot silently regress it. Tests are grouped by the audit

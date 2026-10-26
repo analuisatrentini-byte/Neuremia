@@ -1,4 +1,4 @@
-"""Alembic environment for the NeuroFlow backend.
+"""Alembic environment for the Neuremia backend.
 
 Reads DATABASE_URL from the environment (or defaults to the dev SQLite file,
 matching app.database). Pulls the metadata directly from the SQLAlchemy models
@@ -19,7 +19,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("DATABASE_URL", "sqlite:///./neuroflow.db")
+database_url = os.getenv("DATABASE_URL", "sqlite:///./neuremia.db")
 config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata

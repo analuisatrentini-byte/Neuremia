@@ -1,4 +1,4 @@
-"""End-to-end tests for the three most critical NeuroFlow user flows.
+"""End-to-end tests for the three most critical Neuremia user flows.
 
 These tests exercise the full HTTP stack (registration → authentication →
 clinical data → clinician access) against an isolated SQLite database, with

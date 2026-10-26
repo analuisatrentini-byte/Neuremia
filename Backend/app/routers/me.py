@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..baselines import list_for_patient as list_baselines
 from ..database import get_db
 from ..dependencies import current_user, require_role
+from ..interventions import (
+    insights_for_patient,
+    list_logs_for_patient,
+    log_intervention,
+)
 from ..security import encrypt_field
 from ..services import (
+    accepted_clinician_patient_links,
     alert_read,
     assessment_read,
     audit,
@@ -158,6 +165,66 @@ def revoke_consent(
     return _consent_read(consent)
 
 
+# --- Personal baselines & intervention log --------------------------------
+#
+# Substrate for the "the app knows me" retention loop. Baselines expose the
+# rolling 60-day mean per diary metric so the client can render personalized
+# deltas ("your energy this week is 1.2 std below your normal"). Intervention
+# logs record what the patient did in response to an alert or app suggestion,
+# with outcomes scored 72h later and aggregated into per-family insights.
+
+
+@router.get("/baselines", response_model=list[schemas.UserBaselineRead])
+def get_my_baselines(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    require_role(user, models.UserRole.patient.value)
+    return list_baselines(db, user.id)
+
+
+@router.post("/interventions", response_model=schemas.InterventionLogRead)
+def log_my_intervention(
+    payload: schemas.InterventionLogCreate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    require_role(user, models.UserRole.patient.value)
+    record = log_intervention(
+        db,
+        user.id,
+        intervention_type=payload.intervention_type,
+        trigger_source=payload.trigger_source,
+        notes=payload.notes,
+    )
+    audit(db, user, "log_intervention", "intervention_log", payload.intervention_type)
+    db.commit()
+    db.refresh(record)
+    from ..interventions import log_read  # local import avoids router-level cycle
+    return log_read(record)
+
+
+@router.get("/interventions", response_model=list[schemas.InterventionLogRead])
+def list_my_interventions(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    require_role(user, models.UserRole.patient.value)
+    return list_logs_for_patient(db, user.id, limit=limit)
+
+
+@router.get(
+    "/interventions/insights", response_model=schemas.InterventionInsightsResponse
+)
+def my_intervention_insights(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
+    require_role(user, models.UserRole.patient.value)
+    return insights_for_patient(db, user.id)
+
+
 @router.get("/audit-logs", response_model=list[schemas.AuditLogRead])
 def my_audit_logs(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
     logs = (
@@ -277,7 +344,9 @@ def delete_my_clinical_data(
     db: Session = Depends(get_db),
     user: models.User = Depends(current_user),
 ):
-    cutoff = utcnow() - timedelta(days=max(days_older_than, 1))
+    # N-C2 — validate days_older_than upper bound (max 10 years for LGPD)
+    days_older_than = min(max(days_older_than, 1), 3650)
+    cutoff = utcnow() - timedelta(days=days_older_than)
     checkins = db.query(models.DailyCheckIn).filter(
         models.DailyCheckIn.patient_id == user.id,
         models.DailyCheckIn.created_at < cutoff,
@@ -285,6 +354,7 @@ def delete_my_clinical_data(
     assessments = db.query(models.ScaleAssessment).filter(
         models.ScaleAssessment.patient_id == user.id,
         models.ScaleAssessment.created_at < cutoff,
+        models.ScaleAssessment.deleted_at.is_(None),
     ).all()
     alerts = db.query(models.ClinicalAlert).filter(
         models.ClinicalAlert.patient_id == user.id,
@@ -295,18 +365,21 @@ def delete_my_clinical_data(
         models.ClinicalReport.created_at < cutoff,
     ).all()
 
-    counts = (len(checkins), len(assessments), len(alerts), len(reports))
-    for collection in (checkins, assessments, alerts, reports):
+    # N-C2 — soft delete ScaleAssessment to maintain audit trail for LGPD
+    for assessment in assessments:
+        assessment.deleted_at = utcnow()
+    # Hard delete for other records (already soft-deleteable entities)
+    for collection in (checkins, alerts, reports):
         for item in collection:
             db.delete(item)
 
     audit(db, user, "delete_old_clinical_data", "user", str(user.id))
     db.commit()
     return schemas.RetentionDeleteResponse(
-        deleted_checkins=counts[0],
-        deleted_assessments=counts[1],
-        deleted_alerts=counts[2],
-        deleted_reports=counts[3],
+        deleted_checkins=len(checkins),
+        deleted_assessments=len(assessments),
+        deleted_alerts=len(alerts),
+        deleted_reports=len(reports),
     )
 
 
@@ -328,12 +401,9 @@ def delete_my_account(db: Session = Depends(get_db), user: models.User = Depends
 @router.get("/linked-clinicians", response_model=list[schemas.LinkedClinicianRead])
 def list_my_linked_clinicians(db: Session = Depends(get_db), user: models.User = Depends(current_user)):
     require_role(user, models.UserRole.patient.value)
-    links = (
-        db.query(models.ClinicianPatientLink)
-        .filter(models.ClinicianPatientLink.patient_id == user.id)
-        .order_by(models.ClinicianPatientLink.created_at.desc())
-        .all()
-    )
+    links = accepted_clinician_patient_links(db, patient_id=user.id).order_by(
+        models.ClinicianPatientLink.created_at.desc()
+    ).all()
     clinician_ids = [link.clinician_id for link in links]
     if not clinician_ids:
         return []

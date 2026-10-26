@@ -1,17 +1,17 @@
-# NeuroFlow: embasamento teorico e plano de validacao
+# Neuremia: embasamento teorico e plano de validacao
 
-Este documento descreve a base teorica do NeuroFlow e o que precisa ser validado antes de qualquer uso clinico formal. O sistema deve ser tratado como apoio ao monitoramento e a decisao clinica, nao como diagnostico automatico.
+Este documento descreve a base teorica do Neuremia e o que precisa ser validado antes de qualquer uso clinico formal. O sistema deve ser tratado como apoio ao monitoramento e a decisao clinica, nao como diagnostico automatico.
 
 ## 0. Referencia DSM-5/DSM-5-TR
 
-O NeuroFlow usa o DSM-5/DSM-5-TR como referencia conceitual para organizar dominios de acompanhamento, sem reproduzir criterios diagnosticos oficiais e sem automatizar diagnostico. O DSM e um sistema de classificacao clinica publicado pela American Psychiatric Association; a versao DSM-5-TR foi publicada em 2022.
+O Neuremia usa o DSM-5/DSM-5-TR como referencia conceitual para organizar dominios de acompanhamento, sem reproduzir criterios diagnosticos oficiais e sem automatizar diagnostico. O DSM e um sistema de classificacao clinica publicado pela American Psychiatric Association; a versao DSM-5-TR foi publicada em 2022.
 
 Como regra de produto:
 
 - o app nao deve afirmar que o usuario "tem" um transtorno;
 - o app pode acompanhar dominios clinicamente relevantes, como humor, ansiedade, sono, energia, funcionamento, seguranca, gatilhos e adesao;
 - qualquer hipotese diagnostica depende de entrevista clinica, duracao, prejuizo funcional, contexto cultural, exclusoes medicas/substancias e julgamento profissional;
-- as escalas e o score NeuroFlow sao instrumentos de rastreio/monitoramento, nao diagnostico automatico.
+- as escalas e o score Neuremia sao instrumentos de rastreio/monitoramento, nao diagnostico automatico.
 
 Mapeamento de dominios usado no app:
 
@@ -25,17 +25,17 @@ Mapeamento de dominios usado no app:
 
 ## 1. Escalas clinicas
 
-O app separa escalas validadas do score proprietario NeuroFlow.
+O app separa escalas validadas do score proprietario Neuremia.
 
 - PHQ-9: instrumento breve para rastreio e gravidade de sintomas depressivos, originalmente validado por Kroenke, Spitzer e Williams.
 - GAD-7: instrumento breve para ansiedade, validado por Spitzer, Kroenke, Williams e Lowe.
 - YMRS: escala de mania de 11 itens descrita por Young, Biggs, Ziegler e Meyer.
 
-Regra de produto: PHQ-9, GAD-7 e YMRS devem permanecer como resultados proprios. O NeuroFlow Risk Signature pode usar esses resultados como sinais auxiliares, mas nao deve alterar a pontuacao oficial das escalas.
+Regra de produto: PHQ-9, GAD-7 e YMRS devem permanecer como resultados proprios. O Neuremia Risk Signature pode usar esses resultados como sinais auxiliares, mas nao deve alterar a pontuacao oficial das escalas.
 
 ## 2. Fenotipagem digital
 
-A proposta do NeuroFlow se apoia no conceito de fenotipagem digital: combinar autorrelato, sensores, padroes de interacao e dados longitudinais para acompanhar estados comportamentais e fisiologicos ao longo do tempo.
+A proposta do Neuremia se apoia no conceito de fenotipagem digital: combinar autorrelato, sensores, padroes de interacao e dados longitudinais para acompanhar estados comportamentais e fisiologicos ao longo do tempo.
 
 No app, isso inclui:
 
@@ -51,9 +51,9 @@ No app, isso inclui:
 
 Limite importante: esses sinais sao correlatos indiretos. Eles nao detectam humor, diagnostico ou risco suicida de forma direta.
 
-## 3. NeuroFlow Risk Signature
+## 3. Neuremia Risk Signature
 
-O NeuroFlow Risk Signature e um score proprietario experimental de 0 a 100.
+O Neuremia Risk Signature e um score proprietario experimental de 0 a 100.
 
 Entradas atuais:
 
@@ -103,7 +103,7 @@ Antes de chamar o produto de clinicamente validado:
    - Medir qualidade do sinal e taxa de leituras descartadas.
 
 2. Validacao do score
-   - Comparar NeuroFlow Risk Signature com PHQ-9, GAD-7, YMRS e avaliacao clinica.
+   - Comparar Neuremia Risk Signature com PHQ-9, GAD-7, YMRS e avaliacao clinica.
    - Medir sensibilidade, especificidade, VPP e VPN.
    - Medir falsos positivos e falsos negativos.
 

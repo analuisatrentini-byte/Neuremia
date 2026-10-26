@@ -4,8 +4,9 @@ import os
 import secrets as _secrets
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger("neuroflow.security")
+logger = logging.getLogger("neuremia.security")
 
+import bcrypt
 import pyotp
 
 # Sprint B: migrado de python-jose (deprecated + CVE-2024-33663/33664) para
@@ -15,13 +16,13 @@ import pyotp
 from cryptography.fernet import Fernet, InvalidToken
 import jwt
 from jwt.exceptions import InvalidTokenError as JWTError
-from passlib.context import CryptContext
 
+# Sprint C: migrado de passlib (unmaintained) para bcrypt nativo
+# bcrypt.hashpw/verify é thread-safe desde Python 3.9+ com GIL
 
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
-
-ENV = os.getenv("NEUROFLOW_ENV", "development").strip().lower()
+ENV = os.getenv("NEUREMIA_ENV", "development").strip().lower()
 IS_PRODUCTION = ENV in {"production", "prod", "staging"}
 
 
@@ -41,13 +42,13 @@ def _require_env(name: str, *, generate_hint: str) -> str:
 
 
 def _require_fernet_key() -> bytes:
-    configured = os.getenv("NEUROFLOW_FIELD_ENCRYPTION_KEY")
+    configured = os.getenv("NEUREMIA_FIELD_ENCRYPTION_KEY")
     if configured and configured.strip():
         return configured.strip().encode()
 
     if IS_PRODUCTION:
         raise RuntimeError(
-            "NEUROFLOW_FIELD_ENCRYPTION_KEY must be set in production. "
+            "NEUREMIA_FIELD_ENCRYPTION_KEY must be set in production. "
             "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
 
@@ -57,28 +58,33 @@ def _require_fernet_key() -> bytes:
 
 
 SECRET_KEY = _require_env(
-    "NEUROFLOW_SECRET_KEY",
+    "NEUREMIA_SECRET_KEY",
     generate_hint="python -c \"import secrets; print(secrets.token_urlsafe(64))\"",
 )
 
 ADMIN_API_KEY = _require_env(
-    "NEUROFLOW_ADMIN_API_KEY",
+    "NEUREMIA_ADMIN_API_KEY",
     generate_hint="python -c \"import secrets; print(secrets.token_urlsafe(48))\"",
 )
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
-password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 field_cipher = Fernet(_require_fernet_key())
 
 
 def hash_password(password: str) -> str:
-    return password_context.hash(password)
+    """Hash a password using bcrypt. Returns the hashed bytes decoded as utf-8."""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return password_context.verify(password, password_hash)
+    """Verify a password against a bcrypt hash."""
+    try:
+        return bcrypt.checkpw(password.encode(), password_hash.encode())
+    except Exception as e:
+        logger.warning("Password verification failed: %s", e)
+        return False
 
 
 def create_access_token(subject: str, epoch: int = 0) -> tuple[str, str]:
@@ -144,7 +150,7 @@ def encrypt_field(value: str | None) -> str:
 
 # ------------------------------------------------------------------ TOTP (M2)
 
-_TOTP_ISSUER = os.getenv("NEUROFLOW_APP_NAME", "NeuroFlow")
+_TOTP_ISSUER = os.getenv("NEUREMIA_APP_NAME", "Neuremia")
 _TOTP_PENDING_TTL_SECONDS = 300  # 5 minutes to enter OTP after password ok
 
 

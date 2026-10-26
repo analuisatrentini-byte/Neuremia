@@ -1,6 +1,6 @@
-# NeuroFlow Backend
+# Neuremia Backend
 
-API em FastAPI que sustenta autenticação, registros clínicos, vínculo médico-paciente (via convite com aceite), notificações e direitos LGPD do app iOS NeuroFlow.
+API em FastAPI que sustenta autenticação, registros clínicos, vínculo médico-paciente (via convite com aceite), notificações e direitos LGPD do app iOS Neuremia.
 
 ## Stack
 
@@ -9,16 +9,16 @@ API em FastAPI que sustenta autenticação, registros clínicos, vínculo médic
 - bcrypt (pinado `<4` por compatibilidade com passlib 1.7.x)
 - Fernet para criptografia de campos sensíveis em repouso
 
-## Variáveis obrigatórias em produção (`NEUROFLOW_ENV=production`)
+## Variáveis obrigatórias em produção (`NEUREMIA_ENV=production`)
 
 | Variável | Como gerar |
 |---|---|
-| `NEUROFLOW_SECRET_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
-| `NEUROFLOW_FIELD_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `NEUROFLOW_ADMIN_API_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `DATABASE_URL` | URL Postgres gerenciado, ex. `postgresql+psycopg://user:pass@host:5432/neuroflow` |
+| `NEUREMIA_SECRET_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `NEUREMIA_FIELD_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `NEUREMIA_ADMIN_API_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `DATABASE_URL` | URL Postgres gerenciado, ex. `postgresql+psycopg://user:pass@host:5432/neuremia` |
 
-Em desenvolvimento (`NEUROFLOW_ENV=development` ou ausente), chaves efêmeras são geradas por boot. Não existem em produção sem fail-fast.
+Em desenvolvimento (`NEUREMIA_ENV=development` ou ausente), chaves efêmeras são geradas por boot. Não existem em produção sem fail-fast.
 
 ## Rodar localmente
 
@@ -39,12 +39,12 @@ Abrir `http://127.0.0.1:8000/docs` para o Swagger.
 
 ## Banco de dados
 
-Padrão dev: SQLite em `./neuroflow.db`. **Não versionar este arquivo.** O `.gitignore` já cobre.
+Padrão dev: SQLite em `./neuremia.db`. **Não versionar este arquivo.** O `.gitignore` já cobre.
 
 Trocar para Postgres:
 
 ```bash
-export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/neuroflow"
+export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/neuremia"
 ```
 
 ### Migrations (Alembic)
