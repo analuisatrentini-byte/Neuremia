@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,6 +27,9 @@ def pg_env(url, *, scratch=False):
 def run(args, env):
     result = subprocess.run(args, env=env, capture_output=True)
     if result.returncode:
+        message = result.stderr.decode(errors='replace')
+        if 'schema "public" already exists' in message:
+            raise RuntimeError('Restore target already contains the public schema')
         # Database errors can contain clinical values. Keep logs free of them.
         raise RuntimeError(f'{args[0]} failed (exit {result.returncode}); no data logged')
     return result.stdout
@@ -36,8 +40,15 @@ def restore_check(dump, field_key, env):
                   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"], env)
     if int(tables.strip()) != 0:
         raise RuntimeError('Restore target must be empty; refusing to overwrite data')
+    # A freshly created PostgreSQL database already has the public namespace.
+    # Keep it and restore its contents; do not drop any destination objects.
+    toc = run(['pg_restore', '--list', str(dump)], env).decode()
+    entries = '\n'.join(line for line in toc.splitlines()
+                        if not re.search(r'\bSCHEMA - public\b', line))
+    listing = dump.with_suffix('.list')
+    listing.write_text(entries + '\n')
     run(['pg_restore', '--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges',
-         '--dbname', env['PGDATABASE'], str(dump)], env)
+         '--use-list', str(listing), '--dbname', env['PGDATABASE'], str(dump)], env)
     run(['psql', '-X', '-At', '-v', 'ON_ERROR_STOP=1', '-c',
          'SELECT version_num FROM alembic_version; SELECT count(*) FROM users; SELECT count(*) FROM daily_checkins;'], env)
     # Validate the recovery key against an encrypted field if any account exists.
