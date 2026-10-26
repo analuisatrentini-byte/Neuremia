@@ -1,0 +1,51 @@
+name: Encrypted database backup
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 6 * * *' # 03:23 America/Sao_Paulo
+permissions:
+  contents: read
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: postgres:17-bookworm
+    services:
+      restore:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: ephemeral-restore-only
+          POSTGRES_DB: restore_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install encryption library
+        run: apt-get update && apt-get install -y --no-install-recommends python3 python3-cryptography
+      - name: Create encrypted backup
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          NEUREMIA_FIELD_ENCRYPTION_KEY: ${{ secrets.NEUREMIA_FIELD_ENCRYPTION_KEY }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: python3 scripts/backup/backup.py create backup/neuremia.enc
+      - name: Retain encrypted copy for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuremia-backup-${{ github.run_id }}
+          path: backup/neuremia.enc
+          retention-days: 30
+          if-no-files-found: error
+      - name: Verify restore in disposable database
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          RESTORE_DATABASE_URL: postgresql://postgres:ephemeral-restore-only@restore:5432/restore_test
+        run: PGSSLMODE=disable python3 scripts/backup/backup.py verify backup/neuremia.enc
+      - name: Remove runner copy
+        if: always()
+        run: rm -f backup/neuremia.enc

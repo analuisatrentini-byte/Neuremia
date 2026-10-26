@@ -42,6 +42,9 @@ Backend/neuroflow.db
 .env.local
 .env.*.local
 Backend/.env
+/backup/
+*.dump
+*.enc
 
 # IDE
 .idea/
