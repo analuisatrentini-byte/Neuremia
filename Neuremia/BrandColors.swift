@@ -10,7 +10,7 @@ import SwiftUI
 import UIKit
 
 enum DataResidencyPolicy {
-    static let localOnlyMode = true
+    static let localOnlyMode = false
     static var remoteSyncEnabled: Bool { !localOnlyMode }
 }
 
