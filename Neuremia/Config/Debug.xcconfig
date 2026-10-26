@@ -7,6 +7,8 @@ INFOPLIST_KEY_CFBundleDisplayName = Neuremia
 
 // Backend URL — local dev server (plain HTTP allowed in DEBUG by CertificatePinningDelegate)
 INFOPLIST_KEY_NeuremiaAPIBaseURL = http:/$()/127.0.0.1:8000
+// Physical iPhones connect to the deployed API; simulator keeps local development.
+INFOPLIST_KEY_NeuremiaAPIBaseURL[sdk=iphoneos*] = https:/$()/neuremia-api-production.up.railway.app
 
 // Cert pins — empty in Debug; CertificatePinningDelegate falls through to
 // OS trust store when this key is absent or empty (see BackendAuthClient.swift).
