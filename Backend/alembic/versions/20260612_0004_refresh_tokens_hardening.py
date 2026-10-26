@@ -37,8 +37,8 @@ def upgrade() -> None:
     if _is_sqlite():
         # SQLite cannot ALTER a FK constraint in place; batch_alter_table
         # recreates the table, applying the new ON DELETE CASCADE rule.
-        with op.batch_alter_table("refresh_tokens") as batch_op:
-            batch_op.drop_constraint(None, type_="foreignkey")
+        with op.batch_alter_table("refresh_tokens", naming_convention={"fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s"}) as batch_op:
+            batch_op.drop_constraint("fk_refresh_tokens_user_id_users", type_="foreignkey")
             batch_op.create_foreign_key(
                 "fk_refresh_tokens_user_id_users",
                 "users",
@@ -71,7 +71,7 @@ def downgrade() -> None:
                 type_="foreignkey",
             )
             batch_op.create_foreign_key(
-                None,
+                "fk_refresh_tokens_user_id_users",
                 "users",
                 ["user_id"],
                 ["id"],

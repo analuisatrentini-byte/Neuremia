@@ -51,8 +51,8 @@ def _is_sqlite() -> bool:
 def _recreate_fk(table: str, column: str, ondelete: str) -> None:
     constraint_name = f"fk_{table}_{column}_users"
     if _is_sqlite():
-        with op.batch_alter_table(table) as batch_op:
-            batch_op.drop_constraint(None, type_="foreignkey")
+        with op.batch_alter_table(table, naming_convention={"fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s"}) as batch_op:
+            batch_op.drop_constraint(constraint_name, type_="foreignkey")
             batch_op.create_foreign_key(
                 constraint_name,
                 "users",
