@@ -16,4 +16,4 @@ slowapi>=0.1.9,<1.0
 pyotp>=2.9,<3.0                 # M2 — TOTP 2FA (RFC 6238)
 # Test-only — keep here so the Docker image can also run the suite if desired.
 pytest>=8.0,<9.0
-httpx>=0.27,<1.0
+httpx[http2]>=0.27,<1.0

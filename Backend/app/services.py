@@ -656,6 +656,7 @@ def notify_linked_clinicians(
                         "patient_id": str(patient.id),
                     },
                     critical=critical_push,
+                    platform=token.platform,
                 )
                 log_notification(
                     db, patient.id, f"{token.platform}:{token.id}",
@@ -696,7 +697,7 @@ def route_clinical_alert_notification(
             include_caregivers=True,
             send_push=True,
             critical_push=True,
-            sms_caregivers=True,
+            sms_caregivers=False,
         )
         return
 
@@ -764,6 +765,7 @@ def notify_linked_clinicians_report(
                         "event_type": "clinical_report",
                         "patient_id": str(patient.id),
                     },
+                    platform=token.platform,
                 )
                 log_notification(
                     db, patient.id, f"{token.platform}:{token.id}",

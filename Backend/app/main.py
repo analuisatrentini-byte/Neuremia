@@ -20,6 +20,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from .apns import APNsSender
 from .database import get_db
 from .rate_limit import limiter
 from .routers import (
@@ -135,15 +136,16 @@ def production_readiness_checks(
 
     resolved_push = push_webhook_url if push_webhook_url is not None else os.getenv("PUSH_WEBHOOK_URL", "")
     resolved_sms = sms_webhook_url if sms_webhook_url is not None else os.getenv("SMS_WEBHOOK_URL", "")
+    direct_push = APNsSender().enabled
     add(
         "critical_notifications",
-        "pass" if (resolved_push.startswith("https://") or not is_prod) else "warn",
-        "APNs bridge configured" if resolved_push.startswith("https://") else "Critical push bridge not configured",
+        "pass" if (direct_push or resolved_push.startswith("https://") or not is_prod) else "warn",
+        "APNs configured" if direct_push else ("APNs bridge configured" if resolved_push.startswith("https://") else "Push not configured"),
     )
     add(
         "caregiver_sms",
-        "pass" if (resolved_sms.startswith("https://") or not is_prod) else "warn",
-        "SMS bridge configured" if resolved_sms.startswith("https://") else "SMS bridge not configured",
+        "pass",
+        "SMS bridge configured" if resolved_sms.startswith("https://") else "SMS disabled (optional)",
     )
 
     return checks

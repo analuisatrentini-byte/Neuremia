@@ -13,6 +13,8 @@ from email.message import EmailMessage
 from urllib import request
 from urllib.parse import urlparse
 
+from .apns import APNsSender
+
 _SMTP_MAX_ATTEMPTS = 3
 _SMTP_RETRY_BACKOFF_BASE = 1.0  # seconds; doubles on each retry
 
@@ -46,6 +48,7 @@ GENERIC_REPORT_BODY = (
 
 class NotificationService:
     def __init__(self) -> None:
+        self.apns = APNsSender()
         self.smtp_host = os.getenv("SMTP_HOST", "")
         self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
         self.smtp_user = os.getenv("SMTP_USER", "")
@@ -149,6 +152,7 @@ class NotificationService:
         body: str,
         data: dict | None = None,
         critical: bool = False,
+        platform: str = "ios",
     ) -> bool:
         """Push notifications go through a generic worker (Firebase/APNs).
         We can't trust that worker to be a HIPAA/LGPD business associate, so
@@ -157,13 +161,21 @@ class NotificationService:
         names, titles and summaries are stripped."""
         del title, body  # explicit: replaced with generic payload below
 
-        if not self.push_webhook_url:
+        if not self.push_webhook_url and not self.apns.enabled:
             return False
 
         safe_data = {
             k: v for k, v in (data or {}).items()
             if k in {"event_type", "patient_id"}
         }
+
+        if self.apns.enabled:
+            return self.apns.send(token, {
+                "title": "Neuremia",
+                "body": ("Atualizacao clinica urgente. Abra o app para detalhes."
+                         if critical else
+                         "Nova atualizacao clinica disponivel. Abra o app para detalhes."),
+            }, safe_data, platform)
 
         aps: dict = {
             "sound": "default",

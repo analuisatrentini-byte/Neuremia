@@ -452,7 +452,12 @@ extension ContentView {
         }
 
         do {
-            try await BackendAuthClient.registerPushToken(token: token, platform: "ios", token: authToken)
+            #if DEBUG
+            let pushPlatform = "ios-sandbox"
+            #else
+            let pushPlatform = "ios"
+            #endif
+            try await BackendAuthClient.registerPushToken(token: token, platform: pushPlatform, token: authToken)
             apnsDeviceToken = token
             remotePushStatus = "Token APNs enviado ao backend."
         } catch {
